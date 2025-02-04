@@ -1,0 +1,27 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default deny all
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+    
+    // Videos collection rules
+    match /videos/{videoId} {
+      // Allow authenticated users to upload videos
+      allow create: if request.auth != null 
+        && request.resource.size < 100 * 1024 * 1024  // 100MB max
+        && request.resource.contentType.matches('video/.*')
+        && videoId.matches(request.auth.uid + '_.*');  // Must start with user's ID
+      
+      // Allow users to read their own videos
+      allow read: if request.auth != null 
+        && videoId.matches(request.auth.uid + '_.*');
+        
+      // Allow users to delete their own videos
+      allow delete: if request.auth != null 
+        && videoId.matches(request.auth.uid + '_.*');
+    }
+  }
+} 
