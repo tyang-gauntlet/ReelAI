@@ -1,20 +1,24 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { RootNavigator } from './src/navigation/RootNavigator';
+import { LogBox } from 'react-native';
+import { ensureDemoAccount } from './src/config/firebase';
+
+// Ignore non-critical warnings
+LogBox.ignoreLogs([
+  'AsyncStorage has been extracted from react-native core',
+  'Setting a timer for a long period of time',
+]);
 
 export default function App() {
+  useEffect(() => {
+    // Create demo account on app start
+    ensureDemoAccount().catch(console.error);
+  }, []);
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <SafeAreaProvider>
+      <RootNavigator />
+    </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
