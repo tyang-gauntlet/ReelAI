@@ -39,11 +39,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [initialLoad, setInitialLoad] = useState(true);
   const [playerReady, setPlayerReady] = useState(false);
+  const [userPaused, setUserPaused] = useState(false);
   const [debouncedIsVisible, setDebouncedIsVisible] = useState(isVisible);
   const bufferingTimeout = useRef<NodeJS.Timeout>();
   const bufferIndicatorTimeout = useRef<NodeJS.Timeout>();
   const lastPlayAttempt = useRef<number>(0);
   const visibilityTimeout = useRef<NodeJS.Timeout>();
+  const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number } | null>(null);
 
   const player = useVideoPlayer({
     uri: '',
@@ -62,6 +64,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
         throw new Error('No storage path available for video');
       }
 
+      console.log('Loading video metadata:', video.metadata);
+      console.log('Video object:', {
+        id: video.id,
+        metadata: video.metadata,
+        storagePath: video.storagePath
+      });
+
       const storage = getStorage();
       const videoRef = ref(storage, video.storagePath);
       const storageUrl = await getDownloadURL(videoRef);
@@ -76,6 +85,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
         uri: localFileName,
         metadata: { title: video.title },
       });
+
+      // Get video dimensions from metadata if available
+      if (video.metadata?.width && video.metadata?.height) {
+        const dimensions = {
+          width: video.metadata.width,
+          height: video.metadata.height
+        };
+        console.log('Setting video dimensions:', dimensions);
+        setVideoDimensions(dimensions);
+      } else {
+        console.log('No video dimensions in metadata');
+      }
 
       setLoading(false);
       setInitialLoad(false);
@@ -96,13 +117,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     if (isCurrentlyBuffering !== buffering) {
       setBuffering(isCurrentlyBuffering);
 
-      // Clear any existing buffer indicator timeout
       if (bufferIndicatorTimeout.current) {
         clearTimeout(bufferIndicatorTimeout.current);
       }
 
       if (isCurrentlyBuffering && !initialLoad) {
-        // Only show buffering indicator after a delay and if we're not in initial load
         bufferIndicatorTimeout.current = setTimeout(() => {
           if (!initialLoad) {
             setShowBuffering(true);
@@ -117,7 +136,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
       if (bufferingTimeout.current) {
         clearTimeout(bufferingTimeout.current);
       }
-    } else if (status === 'readyToPlay' && !isPlaying && isVisible && playerReady) {
+    } else if (status === 'readyToPlay' && !isPlaying && isVisible && playerReady && !userPaused) {
       const now = Date.now();
       if (now - lastPlayAttempt.current >= MINIMUM_BUFFER_MS) {
         bufferingTimeout.current = setTimeout(() => {
@@ -135,7 +154,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
         clearTimeout(bufferIndicatorTimeout.current);
       }
     };
-  }, [status, isVisible, player, playerReady, buffering, isPlaying, initialLoad]);
+  }, [status, isVisible, player, playerReady, buffering, isPlaying, initialLoad, userPaused]);
 
   useEffect(() => {
     if (player) {
@@ -161,11 +180,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
 
   useEffect(() => {
     const handleVisibilityChange = async () => {
+      if (!playerReady) return;
+
       try {
-        if (debouncedIsVisible && status === 'readyToPlay' && playerReady && !isPlaying) {
-          await player.play();
-        } else if (!debouncedIsVisible && isPlaying) {
+        if (!debouncedIsVisible && player.playing) {
           await player.pause();
+        } else if (debouncedIsVisible && status === 'readyToPlay' && !player.playing && !userPaused) {
+          await player.play();
         }
       } catch (err) {
         console.error('Error handling visibility change:', err);
@@ -173,7 +194,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     };
 
     handleVisibilityChange();
-  }, [debouncedIsVisible, player, status, playerReady, isPlaying]);
+  }, [debouncedIsVisible, player, status, playerReady, userPaused]);
 
   useEffect(() => {
     loadVideo();
@@ -216,18 +237,22 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   }, [user, video.id]);
 
   const togglePlayPause = useCallback(async () => {
-    try {
-      if (!playerReady) return;
+    if (!playerReady) return;
 
-      if (isPlaying) {
+    try {
+      if (player.playing) {
         await player.pause();
+        setUserPaused(true);
       } else {
-        await player.play();
+        setUserPaused(false);
+        if (debouncedIsVisible) {
+          await player.play();
+        }
       }
     } catch (err) {
       console.error('Error toggling playback:', err);
     }
-  }, [isPlaying, player, playerReady]);
+  }, [player, playerReady, debouncedIsVisible]);
 
   const handlePress = useCallback(() => {
     togglePlayPause();
@@ -296,6 +321,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     }
   }, [video.id, user, saved, triggerRefresh]);
 
+  // Determine content fit based on video dimensions
+  const getContentFit = useCallback(() => {
+    if (!videoDimensions) return 'contain';
+    const isVertical = videoDimensions.height > videoDimensions.width;
+    return isVertical ? 'cover' : 'contain';
+  }, [videoDimensions]);
+
   const videoViewConfig = {
     nativeControls: false,
     showNativeControls: false,
@@ -324,7 +356,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
           <VideoView
             player={player}
             style={styles.video}
-            contentFit="contain"
+            contentFit={getContentFit()}
             {...videoViewConfig}
           />
         </View>
@@ -396,11 +428,14 @@ const styles = StyleSheet.create({
   },
   videoContainer: {
     flex: 1,
-    justifyContent: 'center',
+    backgroundColor: '#000',
   },
   video: {
-    flex: 1,
-    width: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   overlayContainer: {
     ...StyleSheet.absoluteFillObject,
@@ -420,7 +455,7 @@ const styles = StyleSheet.create({
   rightControls: {
     position: 'absolute',
     right: theme.spacing.md,
-    bottom: theme.spacing.xl * 2,
+    bottom: Platform.OS === 'ios' ? 120 : 100,
     alignItems: 'center',
   },
   controlButton: {
@@ -437,6 +472,7 @@ const styles = StyleSheet.create({
   },
   bottomInfo: {
     paddingRight: theme.spacing.xl * 3,
+    marginBottom: Platform.OS === 'ios' ? 120 : 100,
   },
   title: {
     color: theme.colors.text.primary,

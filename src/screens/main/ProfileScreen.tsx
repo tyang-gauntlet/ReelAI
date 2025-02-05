@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, FlatList, Image, Dimensions, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, FlatList, Image, Dimensions, ActivityIndicator, Modal, PanResponder } from 'react-native';
 import { SafeScreen } from '../../components/layout/SafeScreen';
 import { useAuth } from '../../hooks/useAuth';
 import { theme } from '../../styles/theme';
@@ -106,6 +106,27 @@ export const ProfileScreen = () => {
   const [loadingThumbnails, setLoadingThumbnails] = useState<{ [key: string]: boolean }>({});
   const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+
+  const panResponder = React.useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        const dy = Math.abs(gestureState.dy);
+        const dx = Math.abs(gestureState.dx);
+        return dy > dx && dy > 10;
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 100) {
+          handleCloseVideo();
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 50 && Math.abs(gestureState.vy) > 0.5) {
+          handleCloseVideo();
+        }
+      },
+    })
+  ).current;
 
   useEffect(() => {
     const fetchVideos = async () => {
@@ -319,13 +340,10 @@ export const ProfileScreen = () => {
           transparent={true}
           onRequestClose={handleCloseVideo}
         >
-          <View style={styles.modalContainer}>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={handleCloseVideo}
-            >
-              <Ionicons name="close" size={24} color={theme.colors.text.primary} />
-            </TouchableOpacity>
+          <View
+            style={styles.modalContainer}
+            {...panResponder.panHandlers}
+          >
             {selectedVideo && (
               <VideoPlayer
                 video={selectedVideo}
@@ -492,14 +510,5 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: theme.colors.background,
-  },
-  closeButton: {
-    position: 'absolute',
-    top: theme.spacing.lg,
-    right: theme.spacing.lg,
-    zIndex: 2,
-    padding: theme.spacing.sm,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.full,
   },
 }); 

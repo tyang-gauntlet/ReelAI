@@ -4,7 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { AuthNavigator } from './AuthNavigator';
 import { useAuth } from '../hooks/useAuth';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Platform } from 'react-native';
 import { HomeScreen } from '../screens/HomeScreen';
 import { ProfileScreen } from '../screens/main/ProfileScreen';
 import { Ionicons } from '@expo/vector-icons';
@@ -34,37 +34,35 @@ const MainTabs = () => {
           } else {
             iconName = focused ? 'person' : 'person-outline';
           }
-          return <Ionicons name={iconName} size={size} color={color} />;
+          return <Ionicons name={iconName} size={30} color={color} />;
         },
-        tabBarActiveTintColor: theme.colors.accent,
-        tabBarInactiveTintColor: theme.colors.text.secondary,
+        tabBarActiveTintColor: '#fff',
+        tabBarInactiveTintColor: 'rgba(255, 255, 255, 0.5)',
         headerShown: false,
+        tabBarShowLabel: false,
         tabBarStyle: {
-          backgroundColor: theme.colors.surface,
-          borderTopColor: theme.colors.border,
-          paddingBottom: theme.spacing.sm,
-          height: 60,
-        },
-        tabBarLabelStyle: {
-          fontSize: theme.typography.sizes.xs,
-          fontWeight: theme.typography.weights.medium,
-          paddingBottom: theme.spacing.xs,
+          backgroundColor: 'transparent',
+          borderTopWidth: 0,
+          height: Platform.OS === 'ios' ? 65 : 50,
+          paddingBottom: Platform.OS === 'ios' ? 20 : 0,
+          paddingTop: 0,
+          position: 'absolute',
+          bottom: 20,
+          left: 0,
+          right: 0,
+          elevation: 0,
+          shadowOpacity: 0,
+          backdropFilter: 'blur(10px)',
         },
       })}
     >
       <Tab.Screen
         name="Home"
         component={HomeScreen}
-        options={{
-          tabBarLabel: 'Home'
-        }}
       />
       <Tab.Screen
         name="Profile"
         component={ProfileScreen}
-        options={{
-          tabBarLabel: 'Profile'
-        }}
       />
     </Tab.Navigator>
   );

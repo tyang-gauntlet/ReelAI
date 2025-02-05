@@ -25,13 +25,15 @@ export interface Video {
     duration?: number;
     size?: number;
     contentType?: string;
+    width?: number;
+    height?: number;
   };
 }
 
 const VideoFeed: React.FC = () => {
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
-  const pageHeight = WINDOW_HEIGHT - insets.bottom - 60;
+  const pageHeight = WINDOW_HEIGHT;
 
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
