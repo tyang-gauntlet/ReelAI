@@ -1,15 +1,6 @@
-import { initializeApp } from 'firebase/app';
-import {
-  getAuth,
-  createUserWithEmailAndPassword,
-  signOut,
-  signInWithCredential,
-  GoogleAuthProvider,
-  initializeAuth,
-  getReactNativePersistence,
-} from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
-import { getStorage, ref, getDownloadURL, connectStorageEmulator } from 'firebase/storage';
+import auth from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore';
+import storage from '@react-native-firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FIREBASE_API_KEY, PROJECT_ID } from '@env';
 
@@ -24,27 +15,13 @@ const firebaseConfig = {
   databaseURL: `https://reelai-c82fc.firebaseio.com`,
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-
-// Initialize Firestore and Storage
-export const db = getFirestore(app);
-export const storage = getStorage(app, 'gs://reelai-c82fc.firebasestorage.app');
-
-// Initialize Auth with persistence
-export const auth = initializeAuth(app, {
-  persistence: getReactNativePersistence(AsyncStorage),
-});
-
-// Configure storage settings
-// storage.maxOperationRetryTime = 10000; // 10 seconds max for operations
-// storage.maxUploadRetryTime = 10000; // 10 seconds max for uploads
+// Export Firebase services
+export { auth, firestore, storage };
 
 // Add this function to clear auth state
 export const clearAuthState = async () => {
   try {
-    await signOut(auth);
-    // Clear any stored auth data
+    await auth().signOut();
     await AsyncStorage.removeItem('@auth_state');
     console.log('Auth state cleared successfully');
   } catch (error) {
@@ -56,10 +33,10 @@ export const clearAuthState = async () => {
 export const getVideoUrl = async (videoPath: string) => {
   try {
     console.log('Attempting to get video URL for path:', videoPath);
-    const videoRef = ref(storage, videoPath);
+    const videoRef = storage().ref(videoPath);
     console.log('Storage reference created');
 
-    const url = await getDownloadURL(videoRef);
+    const url = await videoRef.getDownloadURL();
     console.log('Retrieved download URL:', url);
 
     // Verify the URL is accessible
@@ -85,15 +62,15 @@ export const debugVideoAccess = async (videoPath: string) => {
   console.log('=== Starting Video Debug ===');
   try {
     // Check if storage is initialized
-    console.log('Storage instance:', storage ? 'Initialized' : 'Not initialized');
-    console.log('Storage bucket:', storage.app.options.storageBucket);
+    console.log('Storage instance:', storage() ? 'Initialized' : 'Not initialized');
+    console.log('Storage bucket:', storage().app.options.storageBucket);
 
     // Try to get video URL
     console.log('Attempting to get video URL...');
-    const videoRef = ref(storage, videoPath);
+    const videoRef = storage().ref(videoPath);
     console.log('Video reference:', videoRef.fullPath);
 
-    const url = await getDownloadURL(videoRef);
+    const url = await videoRef.getDownloadURL();
     console.log('Download URL obtained:', url);
 
     // Test URL access
@@ -124,10 +101,10 @@ export const TEST_PASSWORD = 'test123456';
 export const ensureDemoAccount = async () => {
   try {
     // First try to create the account
-    const userCredential = await createUserWithEmailAndPassword(auth, DEMO_EMAIL, DEMO_PASSWORD);
+    const userCredential = await auth().signInWithEmailAndPassword(DEMO_EMAIL, DEMO_PASSWORD);
     console.log('Demo account created successfully');
     // Sign out after creation
-    await signOut(auth);
+    await auth().signOut();
   } catch (error: any) {
     // If account already exists, that's fine
     if (error.code === 'auth/email-already-in-use') {
@@ -142,10 +119,10 @@ export const ensureDemoAccount = async () => {
 export const ensureTestAccount = async () => {
   try {
     // First try to create the account
-    const userCredential = await createUserWithEmailAndPassword(auth, TEST_EMAIL, TEST_PASSWORD);
+    const userCredential = await auth().signInWithEmailAndPassword(TEST_EMAIL, TEST_PASSWORD);
     console.log('Test account created successfully');
     // Sign out after creation
-    await signOut(auth);
+    await auth().signOut();
   } catch (error: any) {
     // If account already exists, that's fine
     if (error.code === 'auth/email-already-in-use') {
@@ -157,8 +134,6 @@ export const ensureTestAccount = async () => {
 };
 
 export const signInWithGoogleCredential = async (idToken: string) => {
-  const googleCredential = GoogleAuthProvider.credential(idToken);
-  return signInWithCredential(auth, googleCredential);
+  const googleCredential = auth.GoogleAuthProvider.credential(idToken);
+  return auth().signInWithCredential(googleCredential);
 };
-
-export default app;
