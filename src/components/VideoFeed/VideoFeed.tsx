@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, FlatList, Dimensions, ActivityIndicator, ViewToken, StyleSheet } from 'react-native';
 import { QueryDocumentSnapshot } from 'firebase/firestore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
 import VideoPlayer from '../VideoPlayer/VideoPlayer';
 import { fetchVideosFromFirestore } from '../../services/videoService';
+import { theme } from '../../styles/theme';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { height: WINDOW_HEIGHT, width: WINDOW_WIDTH } = Dimensions.get('window');
 
 export interface Video {
   id: string;
@@ -19,6 +22,10 @@ export interface Video {
 }
 
 const VideoFeed: React.FC = () => {
+  const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
+  const pageHeight = WINDOW_HEIGHT - insets.bottom - 60;
+
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
@@ -70,70 +77,95 @@ const VideoFeed: React.FC = () => {
   }, [videos]);
 
   const renderItem = useCallback(({ item, index }: { item: Video; index: number }) => (
-    <View style={styles.videoContainer}>
-      <VideoPlayer
-        video={item}
-        isVisible={index === visibleVideoIndex}
-      />
+    <View style={[styles.pageContainer, { height: pageHeight }]}>
+      <View style={styles.pageContent}>
+        <VideoPlayer
+          video={item}
+          isVisible={index === visibleVideoIndex && isFocused}
+        />
+      </View>
     </View>
-  ), [visibleVideoIndex]);
+  ), [visibleVideoIndex, isFocused, pageHeight]);
 
   if (loading && videos.length === 0) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
+      <View style={[styles.loadingContainer, { height: pageHeight }]}>
+        <ActivityIndicator size="large" color={theme.colors.accent} />
       </View>
     );
   }
 
   return (
-    <FlatList
-      data={videos}
-      renderItem={renderItem}
-      keyExtractor={item => item.id}
-      pagingEnabled
-      showsVerticalScrollIndicator={false}
-      onEndReached={loadMore}
-      onEndReachedThreshold={0.5}
-      onViewableItemsChanged={onViewableItemsChanged}
-      viewabilityConfig={{
-        itemVisiblePercentThreshold: 50,
-        minimumViewTime: 0,
-      }}
-      getItemLayout={(data, index) => ({
-        length: SCREEN_HEIGHT,
-        offset: SCREEN_HEIGHT * index,
-        index,
-      })}
-      initialNumToRender={2}
-      maxToRenderPerBatch={3}
-      windowSize={5}
-      ListFooterComponent={loading && videos.length > 0 ? (
-        <View style={styles.footerContainer}>
-          <ActivityIndicator size="small" color="#007AFF" />
-        </View>
-      ) : null}
-    />
+    <View style={styles.container}>
+      <View style={[styles.feedContainer, { height: pageHeight }]}>
+        <FlatList
+          data={videos}
+          renderItem={renderItem}
+          keyExtractor={item => item.id}
+          pagingEnabled
+          showsVerticalScrollIndicator={false}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={{
+            itemVisiblePercentThreshold: 50,
+            minimumViewTime: 0,
+          }}
+          getItemLayout={(data, index) => ({
+            length: pageHeight,
+            offset: pageHeight * index,
+            index,
+          })}
+          snapToInterval={pageHeight}
+          decelerationRate="fast"
+          removeClippedSubviews={true}
+          initialNumToRender={1}
+          maxToRenderPerBatch={2}
+          windowSize={3}
+          ListFooterComponent={loading && videos.length > 0 ? (
+            <View style={[styles.footerContainer, { height: pageHeight }]}>
+              <ActivityIndicator size="small" color={theme.colors.accent} />
+            </View>
+          ) : null}
+          style={styles.list}
+        />
+      </View>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  feedContainer: {
+    width: WINDOW_WIDTH,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+  },
+  list: {
+    flex: 1,
+  },
+  pageContainer: {
+    width: WINDOW_WIDTH,
+    backgroundColor: '#000',
+  },
+  pageContent: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  footerContainer: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: theme.colors.background,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#000',
-  },
-  videoContainer: {
-    width: '100%',
-    height: SCREEN_HEIGHT,
-    backgroundColor: '#000',
-  },
-  footerContainer: {
-    height: 100,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#000',
+    backgroundColor: theme.colors.background,
   },
 });
 
