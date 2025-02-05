@@ -17,6 +17,7 @@ import { useVideoList } from '../../contexts/VideoListContext';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MINIMUM_BUFFER_MS = 2000; // Minimum buffer size in milliseconds
 const VISIBILITY_DEBOUNCE_MS = 500; // Debounce time for visibility changes
+const BUFFER_INDICATOR_DELAY = 500; // Delay before showing buffer indicator
 
 interface VideoPlayerProps {
   video: VideoType & {
@@ -34,11 +35,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [buffering, setBuffering] = useState(false);
+  const [showBuffering, setShowBuffering] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [initialLoad, setInitialLoad] = useState(true);
   const [playerReady, setPlayerReady] = useState(false);
   const [debouncedIsVisible, setDebouncedIsVisible] = useState(isVisible);
   const bufferingTimeout = useRef<NodeJS.Timeout>();
+  const bufferIndicatorTimeout = useRef<NodeJS.Timeout>();
   const lastPlayAttempt = useRef<number>(0);
   const visibilityTimeout = useRef<NodeJS.Timeout>();
 
@@ -88,38 +91,51 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   const { status } = useEvent(player, 'statusChange', { status: player.status });
 
-  const { isBuffering } = useEvent(player, 'bufferingChange', { isBuffering: false }, event => {
-    console.log('Buffering state changed:', {
-      oldValue: event.oldValue,
-      newValue: event.newValue,
-    });
-    handleBufferingChange(event.newValue);
-  });
+  useEffect(() => {
+    const isCurrentlyBuffering = status === 'loading';
+    if (isCurrentlyBuffering !== buffering) {
+      setBuffering(isCurrentlyBuffering);
 
-  const handleBufferingChange = useCallback((isBuffering: boolean) => {
-    setBuffering(isBuffering);
+      // Clear any existing buffer indicator timeout
+      if (bufferIndicatorTimeout.current) {
+        clearTimeout(bufferIndicatorTimeout.current);
+      }
 
-    if (isBuffering) {
-      // Clear any existing timeout
+      if (isCurrentlyBuffering && !initialLoad) {
+        // Only show buffering indicator after a delay and if we're not in initial load
+        bufferIndicatorTimeout.current = setTimeout(() => {
+          if (!initialLoad) {
+            setShowBuffering(true);
+          }
+        }, BUFFER_INDICATOR_DELAY);
+      } else {
+        setShowBuffering(false);
+      }
+    }
+
+    if (isCurrentlyBuffering) {
       if (bufferingTimeout.current) {
         clearTimeout(bufferingTimeout.current);
       }
-
-      // Pause video while buffering
-      player.pause();
-    } else {
-      // Only attempt to play if enough time has passed since last attempt
+    } else if (status === 'readyToPlay' && !isPlaying && isVisible && playerReady) {
       const now = Date.now();
       if (now - lastPlayAttempt.current >= MINIMUM_BUFFER_MS) {
         bufferingTimeout.current = setTimeout(() => {
-          if (isVisible && playerReady) {
-            lastPlayAttempt.current = now;
-            player.play();
-          }
-        }, 500); // Small delay to ensure buffer is stable
+          lastPlayAttempt.current = now;
+          player.play();
+        }, 500);
       }
     }
-  }, [isVisible, player, playerReady]);
+
+    return () => {
+      if (bufferingTimeout.current) {
+        clearTimeout(bufferingTimeout.current);
+      }
+      if (bufferIndicatorTimeout.current) {
+        clearTimeout(bufferIndicatorTimeout.current);
+      }
+    };
+  }, [status, isVisible, player, playerReady, buffering, isPlaying, initialLoad]);
 
   useEffect(() => {
     if (player) {
@@ -128,17 +144,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   }, [player]);
 
   useEffect(() => {
-    // Clear any existing timeout
     if (visibilityTimeout.current) {
       clearTimeout(visibilityTimeout.current);
     }
 
-    // Set a new timeout to update the debounced value
     visibilityTimeout.current = setTimeout(() => {
       setDebouncedIsVisible(isVisible);
     }, VISIBILITY_DEBOUNCE_MS);
 
-    // Cleanup on unmount
     return () => {
       if (visibilityTimeout.current) {
         clearTimeout(visibilityTimeout.current);
@@ -149,11 +162,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   useEffect(() => {
     const handleVisibilityChange = async () => {
       try {
-        if (debouncedIsVisible && status === 'readyToPlay' && playerReady) {
-          console.log('Playing video:', video.id);
+        if (debouncedIsVisible && status === 'readyToPlay' && playerReady && !isPlaying) {
           await player.play();
-        } else {
-          console.log('Pausing video:', video.id);
+        } else if (!debouncedIsVisible && isPlaying) {
           await player.pause();
         }
       } catch (err) {
@@ -162,25 +173,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     };
 
     handleVisibilityChange();
-  }, [debouncedIsVisible, player, status, video.id, playerReady]);
+  }, [debouncedIsVisible, player, status, playerReady, isPlaying]);
 
   useEffect(() => {
-    console.log('VideoPlayer mounted/updated:', {
-      id: video.id,
-      isVisible,
-      hasStoragePath: !!video.storagePath,
-      hasDirectUrl: !!video.url,
-    });
     loadVideo();
   }, [video.id, loadVideo]);
-
-  useEffect(() => {
-    console.log('Video data:', {
-      id: video.id,
-      storagePath: video.storagePath,
-      title: video.title,
-    });
-  }, [video]);
 
   useEffect(() => {
     if (status === 'readyToPlay' && !playerReady) {
@@ -220,58 +217,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
 
   const togglePlayPause = useCallback(async () => {
     try {
-      console.log('Toggle play/pause START:', {
-        isPlaying,
-        status,
-        playerReady,
-        playing: player.playing,
-        currentTime: player.currentTime,
-      });
-
-      if (!playerReady) {
-        console.log('Player not ready, ignoring tap');
-        return;
-      }
+      if (!playerReady) return;
 
       if (isPlaying) {
-        console.log('Attempting to pause...');
         await player.pause();
-        console.log('Pause complete, new state:', {
-          isPlaying,
-          playing: player.playing,
-          status: player.status,
-        });
       } else {
-        console.log('Attempting to play...');
         await player.play();
-        console.log('Play complete, new state:', {
-          isPlaying,
-          playing: player.playing,
-          status: player.status,
-        });
       }
-
-      // Log final state
-      console.log('Toggle play/pause END:', {
-        isPlaying,
-        status,
-        playing: player.playing,
-        currentTime: player.currentTime,
-      });
     } catch (err) {
       console.error('Error toggling playback:', err);
     }
-  }, [isPlaying, status, player, playerReady]);
+  }, [isPlaying, player, playerReady]);
 
   const handlePress = useCallback(() => {
-    console.log('Tap received, current state:', {
-      isPlaying,
-      status,
-      playerReady,
-      playing: player.playing,
-    });
     togglePlayPause();
-  }, [isPlaying, status, playerReady, player, togglePlayPause]);
+  }, [togglePlayPause]);
 
   const handleShare = useCallback(async () => {
     try {
@@ -370,7 +330,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
         </View>
 
         <View style={styles.overlayContainer} pointerEvents="box-none">
-          {(loading || buffering) && (
+          {(loading || showBuffering) && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color={theme.colors.accent} />
             </View>
