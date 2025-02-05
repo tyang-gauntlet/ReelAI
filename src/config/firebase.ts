@@ -116,6 +116,10 @@ export const debugVideoAccess = async (videoPath: string) => {
 export const DEMO_EMAIL = 'demo@reelai.com';
 export const DEMO_PASSWORD = 'demo123456';
 
+// Test account credentials
+export const TEST_EMAIL = 'test@reelai.com';
+export const TEST_PASSWORD = 'test123456';
+
 // Create demo account if it doesn't exist
 export const ensureDemoAccount = async () => {
   try {
@@ -130,6 +134,24 @@ export const ensureDemoAccount = async () => {
       console.log('Demo account already exists');
     } else {
       console.error('Error setting up demo account:', error);
+    }
+  }
+};
+
+// Create test account if it doesn't exist
+export const ensureTestAccount = async () => {
+  try {
+    // First try to create the account
+    const userCredential = await createUserWithEmailAndPassword(auth, TEST_EMAIL, TEST_PASSWORD);
+    console.log('Test account created successfully');
+    // Sign out after creation
+    await signOut(auth);
+  } catch (error: any) {
+    // If account already exists, that's fine
+    if (error.code === 'auth/email-already-in-use') {
+      console.log('Test account already exists');
+    } else {
+      console.error('Error setting up test account:', error);
     }
   }
 };

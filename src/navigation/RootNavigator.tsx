@@ -6,7 +6,7 @@ import { AuthNavigator } from './AuthNavigator';
 import { useAuth } from '../hooks/useAuth';
 import { View, ActivityIndicator } from 'react-native';
 import { HomeScreen } from '../screens/HomeScreen';
-import { ProfileScreen } from '../screens/ProfileScreen';
+import { ProfileScreen } from '../screens/main/ProfileScreen';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../styles/theme';
 

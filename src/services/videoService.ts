@@ -7,6 +7,7 @@ import {
   uploadBytesResumable,
   getMetadata,
   deleteObject,
+  uploadBytes,
 } from 'firebase/storage';
 import {
   collection,
@@ -20,13 +21,20 @@ import {
   updateDoc,
   deleteDoc,
   addDoc,
+  where,
 } from 'firebase/firestore';
 import { Video } from '../components/VideoFeed/VideoFeed';
 import * as FileSystem from 'expo-file-system';
+import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
 
 export const fetchVideoURLFromStorage = async (path: string): Promise<string> => {
-  const videoRef = ref(storage, path);
-  return getDownloadURL(videoRef);
+  try {
+    const videoRef = ref(storage, path);
+    return await getDownloadURL(videoRef);
+  } catch (error) {
+    console.error('Error fetching video URL:', error);
+    throw error;
+  }
 };
 
 interface FetchVideosResult {
@@ -54,21 +62,29 @@ export const fetchVideosFromFirestore = async (
     const querySnapshot = await getDocs(videosQuery);
     const lastVisible = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
 
-    // Only include videos that have a storage path
-    const videos = querySnapshot.docs
-      .map(doc => ({
+    const videos = querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
         id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate(),
-      }))
-      .filter(video => video.storagePath) as Video[];
+        title: data.title || '',
+        description: data.description,
+        videoUrl: data.videoUrl,
+        storageUrl: data.storageUrl,
+        thumbnailUrl: data.thumbnailUrl || data.storageUrl, // Use storageUrl as fallback
+        storagePath: data.storagePath,
+        likes: data.likes || 0,
+        createdAt: data.createdAt?.toDate() || new Date(),
+        userId: data.userId || '',
+        metadata: data.metadata,
+      } as Video;
+    });
 
     console.log('Fetched videos:', {
-      total: querySnapshot.docs.length,
-      withStoragePath: videos.length,
+      total: videos.length,
       videos: videos.map(v => ({
         id: v.id,
-        storagePath: v.storagePath,
+        storageUrl: v.storageUrl,
+        thumbnailUrl: v.thumbnailUrl,
       })),
     });
 
@@ -179,6 +195,109 @@ export const populateFirestoreFromStorage = async () => {
     console.log('Firestore population complete');
   } catch (error) {
     console.error('Error populating Firestore:', error);
+    throw error;
+  }
+};
+
+export const generateThumbnailsForExistingVideos = async () => {
+  try {
+    const videosRef = collection(db, 'videos');
+    const q = query(videosRef, where('thumbnailUrl', '==', null));
+    const querySnapshot = await getDocs(q);
+
+    const updates = querySnapshot.docs.map(async doc => {
+      const videoData = doc.data();
+      if (!videoData.storageUrl || !videoData.storagePath) {
+        console.log('Missing required data for video:', doc.id);
+        return;
+      }
+
+      try {
+        // Create thumbnail path from video path
+        const filename = videoData.storagePath.split('/').pop() || '';
+        const thumbnailPath = `thumbnails/${filename.replace(/\.[^/.]+$/, '')}.jpg`;
+        const thumbnailRef = ref(storage, thumbnailPath);
+
+        // Download video temporarily
+        const videoResponse = await fetch(videoData.storageUrl);
+        const videoBlob = await videoResponse.blob();
+
+        // Upload first frame as thumbnail
+        await uploadBytes(thumbnailRef, videoBlob);
+        const thumbnailUrl = await getDownloadURL(thumbnailRef);
+
+        // Update video document
+        await updateDoc(doc.ref, {
+          thumbnailPath,
+          thumbnailUrl,
+          updatedAt: new Date(),
+        });
+
+        console.log('Generated thumbnail for video:', doc.id);
+      } catch (error) {
+        console.error('Error generating thumbnail for video:', doc.id, error);
+      }
+    });
+
+    await Promise.all(updates);
+    console.log('Finished generating thumbnails for all videos');
+  } catch (error) {
+    console.error('Error generating thumbnails:', error);
+    throw error;
+  }
+};
+
+interface UploadVideoMetadata {
+  title: string;
+  description?: string;
+  userId: string;
+}
+
+export const uploadVideo = async (uri: string, metadata: UploadVideoMetadata) => {
+  try {
+    // Create a reference to the video file in storage
+    const filename = uri.split('/').pop() || 'video.mp4';
+    const storagePath = `videos/${filename}`;
+    const storageRef = ref(storage, storagePath);
+
+    // Upload the video file
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    await uploadBytes(storageRef, blob);
+
+    // Get the storage URL
+    const storageUrl = await getDownloadURL(storageRef);
+
+    // Create the video document in Firestore
+    const videoCollection = collection(db, 'videos');
+    const videoDoc = await addDoc(videoCollection, {
+      ...metadata,
+      storagePath,
+      storageUrl,
+      thumbnailUrl: null, // Will be set by cloud function
+      thumbnailPath: null, // Will be set by cloud function
+      processingStatus: 'pending', // Track thumbnail generation status
+      likes: 0,
+      createdAt: new Date(),
+    });
+
+    console.log('Video uploaded, waiting for thumbnail generation:', {
+      videoId: videoDoc.id,
+      storagePath,
+    });
+
+    return {
+      id: videoDoc.id,
+      ...metadata,
+      storagePath,
+      storageUrl,
+      thumbnailUrl: null,
+      processingStatus: 'pending',
+      likes: 0,
+      createdAt: new Date(),
+    };
+  } catch (error) {
+    console.error('Error uploading video:', error);
     throw error;
   }
 };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Platform, Dimensions, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, Platform, Dimensions, ActivityIndicator, Alert } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { Video as VideoType } from '../VideoFeed/VideoFeed';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
@@ -8,9 +8,15 @@ import { useEvent } from 'expo';
 import * as FileSystem from 'expo-file-system';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import { theme } from '../../styles/theme';
+import * as Clipboard from 'expo-clipboard';
+import { useAuth } from '../../hooks/useAuth';
+import { saveVideo, checkIfSaved, unsaveVideo } from '../../services/saveVideoService';
+import { likeVideo, unlikeVideo, checkIfLiked } from '../../services/interactionService';
+import { useVideoList } from '../../contexts/VideoListContext';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MINIMUM_BUFFER_MS = 2000; // Minimum buffer size in milliseconds
+const VISIBILITY_DEBOUNCE_MS = 500; // Debounce time for visibility changes
 
 interface VideoPlayerProps {
   video: VideoType & {
@@ -20,15 +26,21 @@ interface VideoPlayerProps {
 }
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
+  const { user } = useAuth();
+  const { triggerRefresh } = useVideoList();
   const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(video.likes);
+  const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [buffering, setBuffering] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [initialLoad, setInitialLoad] = useState(true);
   const [playerReady, setPlayerReady] = useState(false);
+  const [debouncedIsVisible, setDebouncedIsVisible] = useState(isVisible);
   const bufferingTimeout = useRef<NodeJS.Timeout>();
   const lastPlayAttempt = useRef<number>(0);
+  const visibilityTimeout = useRef<NodeJS.Timeout>();
 
   const player = useVideoPlayer({
     uri: '',
@@ -36,6 +48,42 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
       title: video.title
     }
   });
+
+  const loadVideo = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      setPlayerReady(false);
+
+      if (!video.storagePath) {
+        throw new Error('No storage path available for video');
+      }
+
+      const storage = getStorage();
+      const videoRef = ref(storage, video.storagePath);
+      const storageUrl = await getDownloadURL(videoRef);
+      const localFileName = `${FileSystem.cacheDirectory}video-${video.id}.mp4`;
+
+      const fileInfo = await FileSystem.getInfoAsync(localFileName);
+      if (!fileInfo.exists) {
+        await FileSystem.downloadAsync(storageUrl, localFileName);
+      }
+
+      await player.replace({
+        uri: localFileName,
+        metadata: { title: video.title },
+      });
+
+      setLoading(false);
+      setInitialLoad(false);
+
+    } catch (error: any) {
+      console.error('Error loading video:', error);
+      setError('Failed to load video');
+      setLoading(false);
+      setInitialLoad(false);
+    }
+  }, [video, player]);
 
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   const { status } = useEvent(player, 'statusChange', { status: player.status });
@@ -80,9 +128,28 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   }, [player]);
 
   useEffect(() => {
+    // Clear any existing timeout
+    if (visibilityTimeout.current) {
+      clearTimeout(visibilityTimeout.current);
+    }
+
+    // Set a new timeout to update the debounced value
+    visibilityTimeout.current = setTimeout(() => {
+      setDebouncedIsVisible(isVisible);
+    }, VISIBILITY_DEBOUNCE_MS);
+
+    // Cleanup on unmount
+    return () => {
+      if (visibilityTimeout.current) {
+        clearTimeout(visibilityTimeout.current);
+      }
+    };
+  }, [isVisible]);
+
+  useEffect(() => {
     const handleVisibilityChange = async () => {
       try {
-        if (isVisible && status === 'readyToPlay' && playerReady) {
+        if (debouncedIsVisible && status === 'readyToPlay' && playerReady) {
           console.log('Playing video:', video.id);
           await player.play();
         } else {
@@ -95,7 +162,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     };
 
     handleVisibilityChange();
-  }, [isVisible, player, status, video.id, playerReady]);
+  }, [debouncedIsVisible, player, status, video.id, playerReady]);
 
   useEffect(() => {
     console.log('VideoPlayer mounted/updated:', {
@@ -121,41 +188,35 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     }
   }, [status]);
 
-  const loadVideo = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      setPlayerReady(false);
-
-      if (!video.storagePath) {
-        throw new Error('No storage path available for video');
+  // Check initial like status
+  useEffect(() => {
+    const checkLikeStatus = async () => {
+      if (!user) return;
+      try {
+        const isLiked = await checkIfLiked(user.uid, video.id);
+        setLiked(isLiked);
+      } catch (error) {
+        console.error('Error checking like status:', error);
       }
+    };
 
-      const storage = getStorage();
-      const videoRef = ref(storage, video.storagePath);
-      const storageUrl = await getDownloadURL(videoRef);
-      const localFileName = `${FileSystem.cacheDirectory}video-${video.id}.mp4`;
+    checkLikeStatus();
+  }, [user, video.id]);
 
-      const fileInfo = await FileSystem.getInfoAsync(localFileName);
-      if (!fileInfo.exists) {
-        await FileSystem.downloadAsync(storageUrl, localFileName);
+  // Check initial save status
+  useEffect(() => {
+    const checkSaveStatus = async () => {
+      if (!user) return;
+      try {
+        const isSaved = await checkIfSaved(user.uid, video.id);
+        setSaved(isSaved);
+      } catch (error) {
+        console.error('Error checking save status:', error);
       }
+    };
 
-      await player.replace({
-        uri: localFileName,
-        metadata: { title: video.title },
-      });
-
-      setLoading(false);
-      setInitialLoad(false);
-
-    } catch (error: any) {
-      console.error('Error loading video:', error);
-      setError('Failed to load video');
-      setLoading(false);
-      setInitialLoad(false);
-    }
-  }, [video, player]);
+    checkSaveStatus();
+  }, [user, video.id]);
 
   const togglePlayPause = useCallback(async () => {
     try {
@@ -212,6 +273,69 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     togglePlayPause();
   }, [isPlaying, status, playerReady, player, togglePlayPause]);
 
+  const handleShare = useCallback(async () => {
+    try {
+      if (!video.storagePath) {
+        throw new Error('No storage path available for video');
+      }
+
+      const storage = getStorage();
+      const videoRef = ref(storage, video.storagePath);
+      const shareUrl = await getDownloadURL(videoRef);
+
+      await Clipboard.setStringAsync(shareUrl);
+      Alert.alert('Success', 'Video URL copied to clipboard!');
+    } catch (error) {
+      console.error('Error sharing video:', error);
+      Alert.alert('Error', 'Failed to copy video URL');
+    }
+  }, [video.storagePath]);
+
+  const handleLike = useCallback(async () => {
+    try {
+      if (!user) return;
+
+      // Optimistically update UI
+      setLiked(!liked);
+      setLikeCount(current => current + (liked ? -1 : 1));
+
+      if (liked) {
+        await unlikeVideo(user.uid, video.id);
+      } else {
+        await likeVideo(user.uid, video.id);
+      }
+    } catch (error) {
+      // Revert UI on error
+      setLiked(liked);
+      setLikeCount(current => current + (liked ? 1 : -1));
+      console.error('Error toggling like:', error);
+      Alert.alert('Error', 'Failed to update like status');
+    }
+  }, [video.id, liked, user]);
+
+  const handleSave = useCallback(async () => {
+    try {
+      if (!user) return;
+
+      // Optimistically update UI
+      setSaved(!saved);
+
+      if (!saved) {
+        await saveVideo(user.uid, video.id);
+      } else {
+        await unsaveVideo(user.uid, video.id);
+      }
+
+      // Trigger refresh of video lists
+      triggerRefresh();
+    } catch (error) {
+      // Revert UI on error
+      setSaved(saved);
+      console.error('Error saving video:', error);
+      Alert.alert('Error', 'Failed to update save status');
+    }
+  }, [video.id, user, saved, triggerRefresh]);
+
   const videoViewConfig = {
     nativeControls: false,
     showNativeControls: false,
@@ -256,17 +380,32 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
             <View style={styles.rightControls}>
               <TouchableOpacity
                 style={styles.controlButton}
-                onPress={() => setLiked(!liked)}
+                onPress={handleLike}
               >
                 <Ionicons
                   name={liked ? 'heart' : 'heart-outline'}
                   size={30}
                   color={liked ? theme.colors.like : theme.colors.text.primary}
                 />
-                <Text style={styles.controlText}>{video.likes}</Text>
+                <Text style={styles.controlText}>{likeCount}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.controlButton}>
+              <TouchableOpacity
+                style={styles.controlButton}
+                onPress={handleSave}
+              >
+                <Ionicons
+                  name={saved ? 'bookmark' : 'bookmark-outline'}
+                  size={30}
+                  color={saved ? theme.colors.accent : theme.colors.text.primary}
+                />
+                <Text style={styles.controlText}>Save</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.controlButton}
+                onPress={handleShare}
+              >
                 <Ionicons
                   name="share-social-outline"
                   size={30}

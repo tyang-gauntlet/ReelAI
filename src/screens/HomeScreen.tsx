@@ -2,25 +2,30 @@ import React, { useEffect } from 'react';
 import { View, StyleSheet, StatusBar } from 'react-native';
 import VideoFeed from '../components/VideoFeed/VideoFeed';
 import { cleanupVideoCache } from '../services/videoService';
+import { useAuth } from '../hooks/useAuth';
 
 export const HomeScreen: React.FC = () => {
-  useEffect(() => {
-    const initializeVideos = async () => {
-      try {
-        // First clean up any invalid cached videos
-        await cleanupVideoCache();
-      } catch (error) {
-        console.error('Error initializing videos:', error);
-      }
-    };
+  const { user } = useAuth();
 
-    initializeVideos();
-  }, []);
+  useEffect(() => {
+    if (user) {
+      const initializeVideos = async () => {
+        try {
+          // First clean up any invalid cached videos
+          await cleanupVideoCache();
+        } catch (error) {
+          console.error('Error initializing videos:', error);
+        }
+      };
+
+      initializeVideos();
+    }
+  }, [user]);
 
   return (
     <View style={styles.container}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
-      <VideoFeed />
+      {user && <VideoFeed />}
     </View>
   );
 };

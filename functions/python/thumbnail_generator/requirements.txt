@@ -1,0 +1,9 @@
+firebase-functions==0.4.2
+firebase-admin==6.2.0
+Pillow==10.0.1
+numpy==1.24.3
+google-cloud-storage==2.10.0
+imageio==2.31.0
+imageio-ffmpeg==0.4.9
+setuptools>=69.0.2
+wheel>=0.42.0 

@@ -6,6 +6,10 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { DEMO_EMAIL, DEMO_PASSWORD } from '../../config/firebase';
 import { theme } from '../../styles/theme';
 
+// Test account credentials
+const TEST_EMAIL = 'test@reelai.com';
+const TEST_PASSWORD = 'test123456';
+
 type RootStackParamList = {
   Login: undefined;
   Signup: undefined;
@@ -19,6 +23,7 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
   const [password, setPassword] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
+  const [testLoading, setTestLoading] = useState(false);
   const { login, error } = useAuth();
 
   const handleLogin = async () => {
@@ -49,6 +54,17 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
+  const handleTestLogin = async () => {
+    try {
+      setTestLoading(true);
+      await login(TEST_EMAIL, TEST_PASSWORD);
+    } catch (err) {
+      Alert.alert('Error', error || 'Failed to login with test account');
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Welcome Back!</Text>
@@ -70,7 +86,7 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
       <TouchableOpacity
         style={styles.loginButton}
         onPress={handleLogin}
-        disabled={loginLoading || demoLoading}
+        disabled={loginLoading || demoLoading || testLoading}
       >
         <Text style={styles.buttonText}>
           {loginLoading ? 'Logging in...' : 'Login'}
@@ -80,10 +96,20 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
       <TouchableOpacity
         style={styles.demoButton}
         onPress={handleDemoLogin}
-        disabled={loginLoading || demoLoading}
+        disabled={loginLoading || demoLoading || testLoading}
       >
         <Text style={styles.demoButtonText}>
           {demoLoading ? 'Logging in...' : 'Use Demo Account'}
+        </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.testButton}
+        onPress={handleTestLogin}
+        disabled={loginLoading || demoLoading || testLoading}
+      >
+        <Text style={styles.testButtonText}>
+          {testLoading ? 'Logging in...' : 'Use Test Account'}
         </Text>
       </TouchableOpacity>
 
@@ -125,6 +151,12 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginTop: 10,
   },
+  testButton: {
+    backgroundColor: theme.colors.success,
+    padding: 15,
+    borderRadius: 10,
+    marginTop: 10,
+  },
   buttonText: {
     color: theme.colors.text.inverse,
     textAlign: 'center',
@@ -132,6 +164,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   demoButtonText: {
+    color: theme.colors.text.inverse,
+    textAlign: 'center',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  testButtonText: {
     color: theme.colors.text.inverse,
     textAlign: 'center',
     fontSize: 16,

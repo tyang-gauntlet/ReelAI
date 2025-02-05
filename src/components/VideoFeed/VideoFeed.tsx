@@ -12,13 +12,20 @@ const { height: WINDOW_HEIGHT, width: WINDOW_WIDTH } = Dimensions.get('window');
 export interface Video {
   id: string;
   title: string;
-  description: string;
-  url: string;
+  description?: string;
+  videoUrl?: string;
+  storageUrl: string;
+  thumbnailUrl?: string;
   storagePath?: string;
-  thumbnailUrl: string;
   likes: number;
-  views: number;
   createdAt: Date;
+  userId: string;
+  processingStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+  metadata?: {
+    duration?: number;
+    size?: number;
+    contentType?: string;
+  };
 }
 
 const VideoFeed: React.FC = () => {

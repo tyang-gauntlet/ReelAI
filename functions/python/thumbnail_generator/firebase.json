@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "source": ".",
+    "runtime": "python310",
+    "codebase": "default",
+    "ignore": ["venv", ".git", "firebase-debug.log", "firebase-debug.*.log", "__pycache__", "*.pyc"]
+  }
+}

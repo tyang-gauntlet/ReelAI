@@ -1,0 +1,13 @@
+{
+  "name": "thumbnail-generator",
+  "version": "1.0.0",
+  "description": "Cloud function to generate video thumbnails",
+  "main": "main.py",
+  "engines": {
+    "node": "18"
+  },
+  "scripts": {
+    "deploy": "firebase deploy --only functions:generate_video_thumbnail",
+    "logs": "firebase functions:log"
+  }
+}
