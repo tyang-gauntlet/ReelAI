@@ -1,11 +1,14 @@
-import { storage } from "../config/firebase";
+import { storage } from '../config/firebase';
 import {
   ref,
   uploadBytesResumable,
   getDownloadURL,
   deleteObject,
   listAll,
-} from "firebase/storage";
+  getStorage,
+} from 'firebase/storage';
+import { db } from '../config/firebase';
+import { doc, updateDoc } from 'firebase/firestore';
 
 export interface UploadProgressCallback {
   (progress: number): void;
@@ -45,20 +48,19 @@ export const uploadVideo = async (
     // Return promise that resolves with download URL
     return new Promise((resolve, reject) => {
       uploadTask.on(
-        "state_changed",
-        (snapshot) => {
-          const progress =
-            (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        'state_changed',
+        snapshot => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
           onProgress?.(progress);
         },
-        (error) => {
+        error => {
           reject(error);
         },
         async () => {
           const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
           const metadata: VideoMetadata = {
             fileName,
-            contentType: "video/mp4",
+            contentType: 'video/mp4',
             timestamp: Date.now(),
             userId,
           };
@@ -67,7 +69,7 @@ export const uploadVideo = async (
       );
     });
   } catch (error) {
-    console.error("Error uploading video:", error);
+    console.error('Error uploading video:', error);
     throw error;
   }
 };
@@ -79,13 +81,13 @@ export const uploadVideo = async (
 export const deleteVideo = async (videoUrl: string): Promise<void> => {
   try {
     // If it's a full URL, extract the path
-    const path = videoUrl.includes("firebase")
-      ? videoUrl.split("videos%2F")[1].split("?")[0]
+    const path = videoUrl.includes('firebase')
+      ? videoUrl.split('videos%2F')[1].split('?')[0]
       : videoUrl;
     const videoRef = ref(storage, `videos/${path}`);
     await deleteObject(videoRef);
   } catch (error) {
-    console.error("Error deleting video:", error);
+    console.error('Error deleting video:', error);
     throw error;
   }
 };
@@ -97,18 +99,63 @@ export const deleteVideo = async (videoUrl: string): Promise<void> => {
  */
 export const getUserVideos = async (userId: string): Promise<string[]> => {
   try {
-    const videosRef = ref(storage, "videos");
+    const videosRef = ref(storage, 'videos');
     const result = await listAll(videosRef);
 
     const urls = await Promise.all(
       result.items
-        .filter((item) => item.name.startsWith(`${userId}_`))
-        .map((item) => getDownloadURL(item)),
+        .filter(item => item.name.startsWith(`${userId}_`))
+        .map(item => getDownloadURL(item)),
     );
 
     return urls;
   } catch (error) {
-    console.error("Error getting user videos:", error);
+    console.error('Error getting user videos:', error);
+    throw error;
+  }
+};
+
+export const uploadVideoToStorage = async (videoId: string, videoUrl: string) => {
+  try {
+    // Download video from URL
+    const response = await fetch(videoUrl);
+    const blob = await response.blob();
+
+    // Upload to Firebase Storage
+    const storage = getStorage();
+    const storagePath = `videos/${videoId}.mp4`;
+    const storageRef = ref(storage, storagePath);
+
+    const uploadTask = uploadBytesResumable(storageRef, blob);
+
+    return new Promise((resolve, reject) => {
+      uploadTask.on(
+        'state_changed',
+        snapshot => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          console.log('Upload progress:', progress);
+        },
+        error => {
+          console.error('Upload error:', error);
+          reject(error);
+        },
+        async () => {
+          // Upload completed successfully
+          const downloadURL = await getDownloadURL(storageRef);
+
+          // Update Firestore document with storage path
+          const videoRef = doc(db, 'videos', videoId);
+          await updateDoc(videoRef, {
+            storagePath: storagePath,
+            storageUrl: downloadURL,
+          });
+
+          resolve({ storagePath, downloadURL });
+        },
+      );
+    });
+  } catch (error) {
+    console.error('Error uploading video:', error);
     throw error;
   }
 };

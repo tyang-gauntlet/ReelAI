@@ -17,7 +17,8 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 export const LoginScreen: React.FC<Props> = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
   const { login, error } = useAuth();
 
   const handleLogin = async () => {
@@ -27,25 +28,24 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
     }
 
     try {
-      setLoading(true);
+      setLoginLoading(true);
       await login(email, password);
       // Navigation will be handled by the auth state change
     } catch (err) {
       Alert.alert('Error', error || 'Failed to login');
     } finally {
-      setLoading(false);
+      setLoginLoading(false);
     }
   };
 
   const handleDemoLogin = async () => {
     try {
-      setLoading(true);
-      setEmail(DEMO_EMAIL);
-      setPassword(DEMO_PASSWORD);
+      setDemoLoading(true);
       await login(DEMO_EMAIL, DEMO_PASSWORD);
     } catch (err) {
       Alert.alert('Error', error || 'Failed to login with demo account');
-      setLoading(false);
+    } finally {
+      setDemoLoading(false);
     }
   };
 
@@ -70,20 +70,20 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
       <TouchableOpacity
         style={styles.loginButton}
         onPress={handleLogin}
-        disabled={loading}
+        disabled={loginLoading || demoLoading}
       >
         <Text style={styles.buttonText}>
-          {loading ? 'Logging in...' : 'Login'}
+          {loginLoading ? 'Logging in...' : 'Login'}
         </Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.demoButton}
         onPress={handleDemoLogin}
-        disabled={loading}
+        disabled={loginLoading || demoLoading}
       >
         <Text style={styles.demoButtonText}>
-          {loading ? 'Logging in...' : 'Use Demo Account'}
+          {demoLoading ? 'Logging in...' : 'Use Demo Account'}
         </Text>
       </TouchableOpacity>
 

@@ -1,15 +1,17 @@
-const { getDefaultConfig } = require("expo/metro-config")
+// Learn more https://docs.expo.dev/guides/customizing-metro
+const { getDefaultConfig } = require("expo/metro-config");
 
-const config = getDefaultConfig(__dirname)
+/** @type {import('expo/metro-config').MetroConfig} */
+const config = getDefaultConfig(__dirname);
 
 config.transformer = {
-    ...config.transformer,
-    minifierConfig: {
-        keep_classnames: true,
-        keep_fnames: true,
-        mangle: false,
-        compress: false
-    }
-}
+  ...config.transformer,
+  minifierConfig: {
+    keep_classnames: true,
+    keep_fnames: true,
+    mangle: false,
+    compress: false,
+  },
+};
 
-module.exports = config
+module.exports = config;

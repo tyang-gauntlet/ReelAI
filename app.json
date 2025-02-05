@@ -6,17 +6,24 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.reelai"
+    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#ffffff"
       },
-      "package": "com.reelai.app",
-      "jsEngine": "hermes"
+      "package": "com.anonymous.reelai"
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
+    "experiments": {
+      "tsconfigPaths": true
     },
+    "newArchEnabled": true,
     "jsEngine": "hermes",
-    "newArchEnabled": true
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "webpack"
+    }
   }
 }

@@ -1,30 +1,26 @@
-import React from 'react';
-import { View, StyleSheet, TouchableOpacity, Text } from 'react-native';
-import { useAuth } from '../hooks/useAuth';
-import { theme } from '../styles/theme';
+import React, { useEffect } from 'react';
+import { View, StyleSheet, StatusBar } from 'react-native';
+import VideoFeed from '../components/VideoFeed/VideoFeed';
+import { cleanupVideoCache } from '../services/videoService';
 
-export const HomeScreen = () => {
-  const { logout, user } = useAuth();
+export const HomeScreen: React.FC = () => {
+  useEffect(() => {
+    const initializeVideos = async () => {
+      try {
+        // First clean up any invalid cached videos
+        await cleanupVideoCache();
+      } catch (error) {
+        console.error('Error initializing videos:', error);
+      }
+    };
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
-  };
+    initializeVideos();
+  }, []);
 
   return (
     <View style={styles.container}>
-      <Text style={styles.welcomeText}>
-        Welcome, {user?.email}!
-      </Text>
-      <TouchableOpacity
-        style={styles.logoutButton}
-        onPress={handleLogout}
-      >
-        <Text style={styles.buttonText}>Logout</Text>
-      </TouchableOpacity>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <VideoFeed />
     </View>
   );
 };
@@ -32,28 +28,6 @@ export const HomeScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
-    backgroundColor: theme.colors.background,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  welcomeText: {
-    fontSize: 20,
-    marginBottom: 20,
-    textAlign: 'center',
-    color: theme.colors.text.primary,
-  },
-  logoutButton: {
-    backgroundColor: theme.colors.error,
-    padding: 15,
-    borderRadius: 10,
-    width: '100%',
-    maxWidth: 200,
-  },
-  buttonText: {
-    color: theme.colors.text.inverse,
-    textAlign: 'center',
-    fontSize: 16,
-    fontWeight: '600',
+    backgroundColor: '#000',
   },
 }); 

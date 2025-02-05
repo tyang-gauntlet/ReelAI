@@ -1,4 +1,4 @@
-package com.reelai.app
+package com.anonymous.reelai
 
 import android.os.Build
 import android.os.Bundle

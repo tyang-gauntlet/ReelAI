@@ -14,7 +14,7 @@
 		96905EF65AED1B983A6B3ABC /* libPods-ReelAI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 58EEBF8E8E6FB1BC6CAF49B5 /* libPods-ReelAI.a */; };
 		B18059E884C0ABDD17F3DC3D /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAC715A2D49A985799AEE119 /* ExpoModulesProvider.swift */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
-		FA54526D800A4B0FA42F306C /* noop-file.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A68F5F49FF04C1BBE3F16DD /* noop-file.swift */; };
+		F47D9B2241564DFE98F59731 /* noop-file.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CCF09DF6C644FC69628D0E1 /* noop-file.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,8 +31,8 @@
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		FAC715A2D49A985799AEE119 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-ReelAI/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
-		1A68F5F49FF04C1BBE3F16DD /* noop-file.swift */ = {isa = PBXFileReference; name = "noop-file.swift"; path = "ReelAI/noop-file.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; explicitFileType = undefined; includeInIndex = 0; };
-		4FF68F705AED4E7592FF67B3 /* ReelAI-Bridging-Header.h */ = {isa = PBXFileReference; name = "ReelAI-Bridging-Header.h"; path = "ReelAI/ReelAI-Bridging-Header.h"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; explicitFileType = undefined; includeInIndex = 0; };
+		5CCF09DF6C644FC69628D0E1 /* noop-file.swift */ = {isa = PBXFileReference; name = "noop-file.swift"; path = "ReelAI/noop-file.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; explicitFileType = undefined; includeInIndex = 0; };
+		7E3735E6731F4F65A4954842 /* ReelAI-Bridging-Header.h */ = {isa = PBXFileReference; name = "ReelAI-Bridging-Header.h"; path = "ReelAI/ReelAI-Bridging-Header.h"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -57,8 +57,8 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				13B07FB71A68108700A75B9A /* main.m */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
-				1A68F5F49FF04C1BBE3F16DD /* noop-file.swift */,
-				4FF68F705AED4E7592FF67B3 /* ReelAI-Bridging-Header.h */,
+				5CCF09DF6C644FC69628D0E1 /* noop-file.swift */,
+				7E3735E6731F4F65A4954842 /* ReelAI-Bridging-Header.h */,
 			);
 			name = ReelAI;
 			sourceTree = "<group>";
@@ -198,7 +198,7 @@
 				BB2F792D24A3F905000567C9 /* Expo.plist in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
-				C0E00BD3450C430E9139237F /* ReelAI-Bridging-Header.h in Resources */,
+				736A41CEF7B04D979D98DC05 /* ReelAI-Bridging-Header.h in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -274,7 +274,7 @@
 				13B07FBC1A68108700A75B9A /* AppDelegate.mm in Sources */,
 				13B07FC11A68108700A75B9A /* main.m in Sources */,
 				B18059E884C0ABDD17F3DC3D /* ExpoModulesProvider.swift in Sources */,
-				FA54526D800A4B0FA42F306C /* noop-file.swift in Sources */,
+				F47D9B2241564DFE98F59731 /* noop-file.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -302,12 +302,12 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.reelai.app";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.anonymous.reelai";
 				PRODUCT_NAME = "ReelAI";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = "1,2";
 				SWIFT_OBJC_BRIDGING_HEADER = ReelAI/ReelAI-Bridging-Header.h;
 				CODE_SIGN_ENTITLEMENTS = ReelAI/ReelAI.entitlements;
 			};
@@ -329,11 +329,11 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.reelai.app";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.anonymous.reelai";
 				PRODUCT_NAME = "ReelAI";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = "1,2";
 				SWIFT_OBJC_BRIDGING_HEADER = ReelAI/ReelAI-Bridging-Header.h;
 				CODE_SIGN_ENTITLEMENTS = ReelAI/ReelAI.entitlements;
 			};

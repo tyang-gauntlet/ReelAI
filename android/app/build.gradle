@@ -86,9 +86,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.reelai.app'
+    namespace 'com.anonymous.reelai'
     defaultConfig {
-        applicationId 'com.reelai.app'
+        applicationId 'com.anonymous.reelai'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
