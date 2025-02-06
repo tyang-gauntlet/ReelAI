@@ -13,11 +13,16 @@ import { useAuth } from '../../hooks/useAuth';
 import { saveVideo, checkIfSaved, unsaveVideo } from '../../services/saveVideoService';
 import { likeVideo, unlikeVideo, checkIfLiked } from '../../services/interactionService';
 import { useVideoList } from '../../contexts/VideoListContext';
+import { Animated } from 'react-native';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SCREEN_WIDTH = Dimensions.get('window').width;
 const MINIMUM_BUFFER_MS = 2000; // Minimum buffer size in milliseconds
 const VISIBILITY_DEBOUNCE_MS = 500; // Debounce time for visibility changes
 const BUFFER_INDICATOR_DELAY = 500; // Delay before showing buffer indicator
+const DOT_SIZE = 4;
+const EXPANDED_SIZE = 48; // Slightly larger base size
+const SPACING = 16;
+const ACTIVE_SCALE = 1.6; // Increased scale factor
 
 interface VideoPlayerProps {
   video: VideoType & {
@@ -46,6 +51,15 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   const lastPlayAttempt = useRef<number>(0);
   const visibilityTimeout = useRef<NodeJS.Timeout>();
   const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const expandAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnims = useRef(Array.from({ length: 4 }, () => new Animated.Value(0))).current;
+  const activeIndexAnim = useRef(new Animated.Value(0)).current;
+  const lastTap = useRef<number>(0);
+  const doubleTapTimeout = useRef<NodeJS.Timeout>();
+  const [showLikeAnimation, setShowLikeAnimation] = useState(false);
+  const likeAnimationTimeout = useRef<NodeJS.Timeout>();
+  const likeAnimScale = useRef(new Animated.Value(0)).current;
 
   const player = useVideoPlayer({
     uri: '',
@@ -254,28 +268,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     }
   }, [player, playerReady, debouncedIsVisible]);
 
-  const handlePress = useCallback(() => {
-    togglePlayPause();
-  }, [togglePlayPause]);
-
-  const handleShare = useCallback(async () => {
-    try {
-      if (!video.storagePath) {
-        throw new Error('No storage path available for video');
-      }
-
-      const storage = getStorage();
-      const videoRef = ref(storage, video.storagePath);
-      const shareUrl = await getDownloadURL(videoRef);
-
-      await Clipboard.setStringAsync(shareUrl);
-      Alert.alert('Success', 'Video URL copied to clipboard!');
-    } catch (error) {
-      console.error('Error sharing video:', error);
-      Alert.alert('Error', 'Failed to copy video URL');
-    }
-  }, [video.storagePath]);
-
   const handleLike = useCallback(async () => {
     try {
       if (!user) return;
@@ -297,6 +289,72 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
       Alert.alert('Error', 'Failed to update like status');
     }
   }, [video.id, liked, user]);
+
+  const handleDoubleTap = useCallback(() => {
+    if (!liked) {
+      handleLike();
+    }
+
+    // Show like animation
+    setShowLikeAnimation(true);
+    Animated.sequence([
+      Animated.spring(likeAnimScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 400,
+        friction: 15,
+      }),
+      Animated.timing(likeAnimScale, {
+        toValue: 0,
+        duration: 100,
+        useNativeDriver: true,
+        delay: 500,
+      }),
+    ]).start(() => {
+      setShowLikeAnimation(false);
+    });
+  }, [liked, handleLike]);
+
+  const handlePress = useCallback(() => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 300;
+
+    if (doubleTapTimeout.current) {
+      clearTimeout(doubleTapTimeout.current);
+      doubleTapTimeout.current = undefined;
+
+      if (now - lastTap.current < DOUBLE_TAP_DELAY) {
+        // Double tap detected
+        handleDoubleTap();
+        return;
+      }
+    }
+
+    lastTap.current = now;
+    doubleTapTimeout.current = setTimeout(() => {
+      // Single tap detected
+      togglePlayPause();
+      doubleTapTimeout.current = undefined;
+    }, DOUBLE_TAP_DELAY);
+  }, [togglePlayPause, handleDoubleTap]);
+
+  const handleShare = useCallback(async () => {
+    try {
+      if (!video.storagePath) {
+        throw new Error('No storage path available for video');
+      }
+
+      const storage = getStorage();
+      const videoRef = ref(storage, video.storagePath);
+      const shareUrl = await getDownloadURL(videoRef);
+
+      await Clipboard.setStringAsync(shareUrl);
+      Alert.alert('Success', 'Video URL copied to clipboard!');
+    } catch (error) {
+      console.error('Error sharing video:', error);
+      Alert.alert('Error', 'Failed to copy video URL');
+    }
+  }, [video.storagePath]);
 
   const handleSave = useCallback(async () => {
     try {
@@ -335,12 +393,48 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     hideNativeControls: true,
   };
 
+  const handleExpand = () => {
+    Animated.timing(expandAnim, {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleCollapse = () => {
+    Animated.timing(expandAnim, {
+      toValue: 0,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleScale = (index: number) => {
+    Animated.timing(scaleAnims[index], {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleScaleBack = (index: number) => {
+    Animated.timing(scaleAnims[index], {
+      toValue: 0,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleActiveIndex = (index: number) => {
+    activeIndexAnim.setValue(index);
+  };
+
   if (Platform.OS === 'web') {
     return (
       <video
         controls
         style={{ width: '100%', height: '100%' }}
-        src={video.url}
+        src={video.storageUrl}
       />
     );
   }
@@ -412,8 +506,99 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
               <Text style={styles.description}>{video.description}</Text>
             </View>
           </View>
+
+          {showLikeAnimation && (
+            <Animated.View style={[styles.likeAnimation, {
+              transform: [{ scale: likeAnimScale }]
+            }]}>
+              <Ionicons
+                name="heart"
+                size={100}
+                color={theme.colors.like}
+              />
+            </Animated.View>
+          )}
         </View>
       </TouchableOpacity>
+
+      {/* Expanded dock */}
+      {isExpanded && (
+        <Animated.View
+          style={{
+            position: 'absolute',
+            bottom: 50, // Move popup higher
+            flexDirection: 'row',
+            backgroundColor: 'rgba(28, 28, 30, 0.92)',
+            borderRadius: 20,
+            padding: 8,
+            paddingHorizontal: 10,
+            transform: [{
+              translateY: expandAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [15, 0],
+              })
+            }],
+            opacity: expandAnim,
+            shadowColor: '#000',
+            shadowOffset: {
+              width: 0,
+              height: 4,
+            },
+            shadowOpacity: 0.25,
+            shadowRadius: 10,
+            elevation: 8,
+          }}
+        >
+          {routes.map((route, index) => {
+            const isActive = state.index === index;
+            const baseScale = scaleAnims[index].interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.8, 1], // Start from larger initial scale
+            });
+
+            const hoverScale = Animated.multiply(
+              activeIndexAnim.interpolate({
+                inputRange: [index - 1, index, index + 1],
+                outputRange: [1, ACTIVE_SCALE, 1],
+                extrapolate: 'clamp',
+              }),
+              expandAnim
+            );
+
+            const finalScale = Animated.multiply(baseScale, hoverScale);
+
+            return (
+              <Animated.View
+                key={route.name}
+                style={{
+                  marginHorizontal: SPACING / 2,
+                  transform: [
+                    { scale: finalScale }
+                  ],
+                }}
+              >
+                <View
+                  style={{
+                    width: EXPANDED_SIZE,
+                    height: EXPANDED_SIZE,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons
+                    name={(route.icon + (isActive ? '' : '-outline')) as keyof typeof Ionicons.glyphMap}
+                    size={32} // Larger icon size
+                    color="#fff"
+                    style={{
+                      opacity: isActive ? 1 : 0.8,
+                    }}
+                  />
+                </View>
+              </Animated.View>
+            );
+          })}
+        </Animated.View>
+      )}
     </View>
   );
 };
@@ -455,7 +640,7 @@ const styles = StyleSheet.create({
   rightControls: {
     position: 'absolute',
     right: theme.spacing.md,
-    bottom: Platform.OS === 'ios' ? 120 : 100,
+    bottom: Platform.OS === 'ios' ? 180 : 160,
     alignItems: 'center',
   },
   controlButton: {
@@ -472,7 +657,7 @@ const styles = StyleSheet.create({
   },
   bottomInfo: {
     paddingRight: theme.spacing.xl * 3,
-    marginBottom: Platform.OS === 'ios' ? 120 : 100,
+    marginBottom: Platform.OS === 'ios' ? 180 : 160,
   },
   title: {
     color: theme.colors.text.primary,
@@ -489,6 +674,18 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.75)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 3,
+  },
+  likeAnimation: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: [{ translateX: -50 }, { translateY: -50 }],
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
   },
 });
 

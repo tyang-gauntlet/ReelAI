@@ -30,8 +30,18 @@ if [ ! -f ".env" ]; then
     exit 1
 fi
 
-echo -e "${YELLOW}📦 Installing dependencies...${NC}"
-pip install -r requirements.txt
+# Create a temporary virtual environment if it doesn't exist
+if [ ! -d "venv" ]; then
+    echo -e "${YELLOW}📦 Creating virtual environment...${NC}"
+    python3 -m venv venv
+fi
+
+# Activate virtual environment
+source venv/bin/activate
+
+echo -e "${YELLOW}📦 Installing production dependencies...${NC}"
+# Use pip's cache and only install production requirements
+pip install --cache-dir .pip_cache -r requirements.prod.txt
 
 echo -e "${YELLOW}🔐 Loading environment variables...${NC}"
 
@@ -44,46 +54,62 @@ set +a
 ESCAPED_PRIVATE_KEY=$(echo "$FIREBASE_PRIVATE_KEY" | awk '{printf "%s\\n", $0}')
 
 # Prepare environment variables string
-ENV_VARS="FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET},FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID},FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL},FIREBASE_PRIVATE_KEY=${ESCAPED_PRIVATE_KEY}"
+ENV_VARS="FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET},FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID},FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL},FIREBASE_PRIVATE_KEY=${ESCAPED_PRIVATE_KEY},OPENAI_API_KEY=${OPENAI_API_KEY}"
 
-echo -e "${YELLOW}🚀 Deploying function...${NC}"
+echo -e "${YELLOW}🚀 Deploying functions...${NC}"
 
-# First deploy the health check function
-gcloud functions deploy generate-video-thumbnail-health \
-  --gen2 \
+# Common deployment options
+COMMON_OPTS="--gen2 \
   --runtime=python311 \
   --region=us-central1 \
   --source=. \
-  --entry-point=health \
   --trigger-http \
+  --allow-unauthenticated \
+  --set-env-vars=$ENV_VARS \
+  --service-account=firebase-adminsdk-fbsvc@reelai-c82fc.iam.gserviceaccount.com"
+
+# Deploy all functions in parallel
+echo -e "${YELLOW}Deploying health check function...${NC}"
+gcloud functions deploy generate-video-thumbnail-health \
+  $COMMON_OPTS \
+  --entry-point=health \
   --memory=256MB \
   --timeout=30s \
   --min-instances=0 \
-  --max-instances=1 \
-  --allow-unauthenticated
+  --max-instances=1 &
 
-# Then deploy the main function
+echo -e "${YELLOW}Deploying thumbnail generator function...${NC}"
 gcloud functions deploy generate-video-thumbnail \
-  --gen2 \
-  --runtime=python311 \
-  --region=us-central1 \
-  --source=. \
+  $COMMON_OPTS \
   --entry-point=generate_video_thumbnail \
-  --trigger-http \
   --memory=512MB \
   --timeout=540s \
   --min-instances=0 \
-  --max-instances=10 \
-  --allow-unauthenticated \
-  --set-env-vars="$ENV_VARS" \
-  --service-account="firebase-adminsdk-fbsvc@reelai-c82fc.iam.gserviceaccount.com"
+  --max-instances=10 &
 
-# Check if deployment was successful
+echo -e "${YELLOW}Deploying hashtag generator function...${NC}"
+gcloud functions deploy generate-video-hashtags \
+  $COMMON_OPTS \
+  --entry-point=generate_video_hashtags \
+  --memory=2048MB \
+  --timeout=300s \
+  --min-instances=0 \
+  --max-instances=10 &
+
+# Wait for all deployments to finish
+wait
+
+# Check if any deployment failed
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✅ Functions deployed successfully!${NC}"
-    echo -e "${GREEN}Main Function URL: https://us-central1-reelai-c82fc.cloudfunctions.net/generate-video-thumbnail${NC}"
-    echo -e "${GREEN}Health Function URL: https://us-central1-reelai-c82fc.cloudfunctions.net/generate-video-thumbnail-health${NC}"
+    echo -e "${GREEN}Main Function URLs:${NC}"
+    echo -e "${GREEN}Thumbnail Generator: https://us-central1-reelai-c82fc.cloudfunctions.net/generate-video-thumbnail${NC}"
+    echo -e "${GREEN}Hashtag Generator: https://us-central1-reelai-c82fc.cloudfunctions.net/generate-video-hashtags${NC}"
+    echo -e "${GREEN}Health Check: https://us-central1-reelai-c82fc.cloudfunctions.net/generate-video-thumbnail-health${NC}"
 else
     echo -e "${RED}❌ Deployment failed${NC}"
     exit 1
-fi 
+fi
+
+# Deactivate virtual environment
+deactivate 

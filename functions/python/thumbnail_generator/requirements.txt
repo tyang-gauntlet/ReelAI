@@ -1,15 +1,16 @@
 # Core dependencies
-functions-framework>=3.0.0,<4.0.0
-firebase-admin>=6.2.0,<7.0.0
+functions-framework==3.*
+firebase-admin==6.*
 google-cloud-storage>=2.10.0,<3.0.0
 
 # Image and video processing
 numpy>=1.24.3,<2.0.0
-opencv-python-headless>=4.8.1.78,<5.0.0
+opencv-python-headless==4.*
 Pillow>=10.0.1,<11.0.0
+openai==1.*
 
 # Utilities
-python-dotenv>=1.0.0,<2.0.0
+python-dotenv==1.*
 requests>=2.31.0,<3.0.0
 
 # Remove development and type checking dependencies as they're not needed in production 

@@ -1,0 +1,12 @@
+# Core dependencies
+functions-framework==3.*
+firebase-admin==6.*
+google-cloud-storage>=2.10.0,<3.0.0
+
+# Image processing (minimal)
+numpy==1.*
+opencv-python-headless==4.*  # Headless version is smaller
+openai==1.*
+
+# Utilities
+python-dotenv==1.* 

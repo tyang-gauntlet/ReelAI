@@ -1,14 +1,15 @@
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { AuthNavigator } from './AuthNavigator';
 import { useAuth } from '../hooks/useAuth';
-import { View, ActivityIndicator, Platform } from 'react-native';
+import { View, ActivityIndicator, Platform, Pressable, Animated, PanResponder, Dimensions } from 'react-native';
 import { HomeScreen } from '../screens/HomeScreen';
 import { ProfileScreen } from '../screens/main/ProfileScreen';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../styles/theme';
+import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 
 export type RootStackParamList = {
   Auth: undefined;
@@ -23,47 +24,246 @@ export type MainTabParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
+type RouteConfig = {
+  name: keyof MainTabParamList;
+  icon: 'home' | 'person';
+};
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const DOT_SIZE = 4;
+const EXPANDED_SIZE = 44;
+const SPACING = 16;
+const ACTIVE_SCALE = 1.4;
+
+const CustomTabBar: React.FC<BottomTabBarProps> = ({ state, navigation }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const expandAnim = useRef(new Animated.Value(0)).current;
+  const activeIndexAnim = useRef(new Animated.Value(state.index)).current;
+  const longPressTimeout = useRef<NodeJS.Timeout | null>(null);
+
+  const routes: RouteConfig[] = [
+    { name: 'Home', icon: 'home' },
+    { name: 'Profile', icon: 'person' }
+  ];
+
+  const scaleAnims = useRef(routes.map(() => new Animated.Value(0))).current;
+
+  const panResponder = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: (_, gestureState) => {
+      longPressTimeout.current = setTimeout(() => {
+        expandMenu();
+      }, 150);
+    },
+    onPanResponderMove: (_, gestureState) => {
+      if (isExpanded) {
+        const itemWidth = EXPANDED_SIZE + SPACING;
+        const totalWidth = itemWidth * routes.length;
+        const startX = (SCREEN_WIDTH - totalWidth) / 2;
+        const x = gestureState.moveX - startX;
+        const index = Math.min(Math.max(Math.floor(x / itemWidth), 0), routes.length - 1);
+
+        Animated.spring(activeIndexAnim, {
+          toValue: index,
+          useNativeDriver: true,
+          tension: 300,
+          friction: 20,
+        }).start();
+      }
+    },
+    onPanResponderRelease: (_, gestureState) => {
+      if (longPressTimeout.current) {
+        clearTimeout(longPressTimeout.current);
+      }
+      if (isExpanded) {
+        const itemWidth = EXPANDED_SIZE + SPACING;
+        const totalWidth = itemWidth * routes.length;
+        const startX = (SCREEN_WIDTH - totalWidth) / 2;
+        const x = gestureState.moveX - startX;
+        const newIndex = Math.min(Math.max(Math.floor(x / itemWidth), 0), routes.length - 1);
+
+        if (newIndex !== state.index) {
+          navigation.navigate(routes[newIndex].name);
+        }
+        collapseMenu();
+      }
+    },
+    onPanResponderTerminate: () => {
+      if (longPressTimeout.current) {
+        clearTimeout(longPressTimeout.current);
+      }
+      if (isExpanded) {
+        collapseMenu();
+      }
+    },
+  });
+
+  const expandMenu = () => {
+    setIsExpanded(true);
+    Animated.parallel([
+      Animated.spring(expandAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 300,
+        friction: 20,
+      }),
+      ...scaleAnims.map((anim, i) =>
+        Animated.spring(anim, {
+          toValue: 1,
+          useNativeDriver: true,
+          tension: 300,
+          friction: 20,
+          delay: i * 50,
+        })
+      ),
+    ]).start();
+  };
+
+  const collapseMenu = () => {
+    Animated.parallel([
+      Animated.spring(expandAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 300,
+        friction: 20,
+      }),
+      ...scaleAnims.map((anim, i) =>
+        Animated.spring(anim, {
+          toValue: 0,
+          useNativeDriver: true,
+          tension: 300,
+          friction: 20,
+        })
+      ),
+    ]).start(() => setIsExpanded(false));
+  };
+
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        bottom: Platform.OS === 'ios' ? 120 : 115,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+      }}
+      {...panResponder.panHandlers}
+    >
+      {/* Collapsed dots */}
+      <View style={{
+        flexDirection: 'row',
+        opacity: isExpanded ? 0 : 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.35)',
+        padding: 6,
+        borderRadius: 10,
+      }}>
+        {routes.map((route, index) => (
+          <View
+            key={route.name}
+            style={{
+              width: DOT_SIZE,
+              height: DOT_SIZE,
+              borderRadius: DOT_SIZE / 2,
+              backgroundColor: state.index === index ? '#fff' : 'rgba(255, 255, 255, 0.4)',
+              marginHorizontal: SPACING / 4,
+            }}
+          />
+        ))}
+      </View>
+
+      {/* Expanded dock */}
+      {isExpanded && (
+        <Animated.View
+          style={{
+            position: 'absolute',
+            bottom: 35,
+            flexDirection: 'row',
+            backgroundColor: 'rgba(28, 28, 30, 0.92)',
+            borderRadius: 20,
+            padding: 8,
+            paddingHorizontal: 10,
+            transform: [{
+              translateY: expandAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [15, 0],
+              })
+            }],
+            opacity: expandAnim,
+            shadowColor: '#000',
+            shadowOffset: {
+              width: 0,
+              height: 4,
+            },
+            shadowOpacity: 0.25,
+            shadowRadius: 10,
+            elevation: 8,
+          }}
+        >
+          {routes.map((route, index) => {
+            const isActive = state.index === index;
+            const baseScale = scaleAnims[index].interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.7, 1],
+            });
+
+            const hoverScale = Animated.multiply(
+              activeIndexAnim.interpolate({
+                inputRange: [index - 1, index, index + 1],
+                outputRange: [1, ACTIVE_SCALE, 1],
+                extrapolate: 'clamp',
+              }),
+              expandAnim
+            );
+
+            const finalScale = Animated.multiply(baseScale, hoverScale);
+
+            return (
+              <Animated.View
+                key={route.name}
+                style={{
+                  marginHorizontal: SPACING / 2,
+                  transform: [
+                    { scale: finalScale }
+                  ],
+                }}
+              >
+                <View
+                  style={{
+                    width: EXPANDED_SIZE,
+                    height: EXPANDED_SIZE,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ionicons
+                    name={(route.icon + (isActive ? '' : '-outline')) as keyof typeof Ionicons.glyphMap}
+                    size={28}
+                    color="#fff"
+                    style={{
+                      opacity: isActive ? 1 : 0.8,
+                    }}
+                  />
+                </View>
+              </Animated.View>
+            );
+          })}
+        </Animated.View>
+      )}
+    </View>
+  );
+};
+
 const MainTabs = () => {
   return (
     <Tab.Navigator
-      screenOptions={({ route }) => ({
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName: keyof typeof Ionicons.glyphMap;
-          if (route.name === 'Home') {
-            iconName = focused ? 'home' : 'home-outline';
-          } else {
-            iconName = focused ? 'person' : 'person-outline';
-          }
-          return <Ionicons name={iconName} size={30} color={color} />;
-        },
-        tabBarActiveTintColor: '#fff',
-        tabBarInactiveTintColor: 'rgba(255, 255, 255, 0.5)',
+      tabBar={props => <CustomTabBar {...props} />}
+      screenOptions={{
         headerShown: false,
-        tabBarShowLabel: false,
-        tabBarStyle: {
-          backgroundColor: 'transparent',
-          borderTopWidth: 0,
-          height: Platform.OS === 'ios' ? 65 : 50,
-          paddingBottom: Platform.OS === 'ios' ? 20 : 0,
-          paddingTop: 0,
-          position: 'absolute',
-          bottom: 20,
-          left: 0,
-          right: 0,
-          elevation: 0,
-          shadowOpacity: 0,
-          backdropFilter: 'blur(10px)',
-        },
-      })}
+      }}
     >
-      <Tab.Screen
-        name="Home"
-        component={HomeScreen}
-      />
-      <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-      />
+      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );
 };
