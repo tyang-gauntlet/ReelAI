@@ -1,3 +1,6 @@
-from .main import generate_video_thumbnail
+"""Thumbnail Generator package for video thumbnail generation."""
 
-__all__ = ['generate_video_thumbnail']
+from .main import generate_video_thumbnail, health
+from .version import __version__
+
+__all__ = ['generate_video_thumbnail', 'health', '__version__']

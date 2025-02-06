@@ -2,7 +2,19 @@
   "functions": {
     "source": ".",
     "runtime": "python311",
-    "codebase": "default",
-    "ignore": ["venv", ".git", ".gitignore", ".env", "__pycache__", "*.pyc"]
+    "codebase": "thumbnail-generator",
+    "region": "us-central1",
+    "ignore": [
+      "venv",
+      ".git",
+      ".gitignore",
+      ".env",
+      "__pycache__",
+      "*.pyc",
+      "test_*.py",
+      ".vscode",
+      ".idea"
+    ],
+    "predeploy": ["pip install -r requirements.txt"]
   }
 }
