@@ -1,1 +1,4 @@
 *.local
+reelai-c82fc-firebase-adminsdk-fbsvc-aabd3521ca.json
+.env
+service-account.json

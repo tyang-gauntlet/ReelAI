@@ -1,10 +1,14 @@
 .git
 .gitignore
 .env
-*.pyc
 __pycache__/
-.pytest_cache/
+*.pyc
 venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.vscode/
 *.log
 node_modules/
-.vscode/ 
+test/
+*.test.py 
