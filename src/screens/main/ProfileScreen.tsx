@@ -138,30 +138,10 @@ export const ProfileScreen = () => {
   const [showCategorySelectionModal, setShowCategorySelectionModal] = useState(false);
   const [isTabSwitching, setIsTabSwitching] = useState(false);
   const tabSwitchTimeout = useRef<NodeJS.Timeout>();
+  const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
 
   // Add lastActiveTab ref to remember the last active tab
   const lastActiveTab = useRef<TabType>('liked');
-
-  const panResponder = React.useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        const dy = Math.abs(gestureState.dy);
-        const dx = Math.abs(gestureState.dx);
-        return dy > dx && dy > 10;
-      },
-      onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 100) {
-          handleCloseVideo();
-        }
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > 50 && Math.abs(gestureState.vy) > 0.5) {
-          handleCloseVideo();
-        }
-      },
-    })
-  ).current;
 
   useEffect(() => {
     if (activeTab !== lastActiveTab.current) {
@@ -266,7 +246,36 @@ export const ProfileScreen = () => {
   };
 
   const handleVideoPress = (video: VideoType) => {
+    const videos = activeTab === 'liked'
+      ? likedVideos.filter(v => getVideoState(v.id).isLiked)
+      : filteredSavedVideos.filter(v => getVideoState(v.id).isSaved);
+    const index = videos.findIndex(v => v.id === video.id);
+    setCurrentVideoIndex(index);
     setSelectedVideo(video);
+  };
+
+  const handleNextVideo = () => {
+    const videos = activeTab === 'liked'
+      ? likedVideos.filter(v => getVideoState(v.id).isLiked)
+      : filteredSavedVideos.filter(v => getVideoState(v.id).isSaved);
+
+    if (currentVideoIndex < videos.length - 1) {
+      const nextVideo = videos[currentVideoIndex + 1];
+      setCurrentVideoIndex(currentVideoIndex + 1);
+      setSelectedVideo(nextVideo);
+    }
+  };
+
+  const handlePreviousVideo = () => {
+    const videos = activeTab === 'liked'
+      ? likedVideos.filter(v => getVideoState(v.id).isLiked)
+      : filteredSavedVideos.filter(v => getVideoState(v.id).isSaved);
+
+    if (currentVideoIndex > 0) {
+      const previousVideo = videos[currentVideoIndex - 1];
+      setCurrentVideoIndex(currentVideoIndex - 1);
+      setSelectedVideo(previousVideo);
+    }
   };
 
   const handleVideoUpdate = (videoId: string, updates: { liked?: boolean; saved?: boolean }) => {
@@ -518,6 +527,12 @@ export const ProfileScreen = () => {
     }
   };
 
+  const handleHashtagPress = (hashtag: string) => {
+    // Ensure hashtag has '#' prefix
+    const formattedHashtag = hashtag.startsWith('#') ? hashtag : `#${hashtag}`;
+    navigation.navigate('Hashtag', { tag: formattedHashtag });
+  };
+
   const renderVideoItem = ({ item: video }: { item: VideoType }) => {
     const state = getVideoState(video.id);
     const updatedVideo = {
@@ -712,160 +727,197 @@ export const ProfileScreen = () => {
   }
 
   return (
-    <SafeScreen backgroundColor={theme.colors.background}>
-      <View style={styles.container}>
+    <SafeScreen style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="chevron-back" size={28} color={theme.colors.text.primary} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Profile</Text>
         <TouchableOpacity
           style={styles.logoutButton}
           onPress={handleLogout}
         >
           <Ionicons name="log-out-outline" size={24} color={theme.colors.error} />
         </TouchableOpacity>
-
-        <View style={styles.profileContent}>
-          <View style={styles.avatarContainer}>
-            <Ionicons name="person-circle-outline" size={80} color={theme.colors.accent} />
-          </View>
-          <Text style={styles.email}>{user?.email}</Text>
-        </View>
-
-        <View style={styles.tabsContainer}>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'liked' && styles.activeTab]}
-            onPress={() => handleTabPress('liked')}
-          >
-            <Ionicons
-              name="heart"
-              size={20}
-              color={activeTab === 'liked' ? theme.colors.accent : theme.colors.text.secondary}
-            />
-            <Text style={[
-              styles.tabText,
-              activeTab === 'liked' && styles.activeTabText
-            ]}>Liked</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tab, activeTab === 'saved' && styles.activeTab]}
-            onPress={() => handleTabPress('saved')}
-          >
-            <Ionicons
-              name="bookmark"
-              size={20}
-              color={activeTab === 'saved' ? theme.colors.accent : theme.colors.text.secondary}
-            />
-            <Text style={[
-              styles.tabText,
-              activeTab === 'saved' && styles.activeTabText
-            ]}>Saved</Text>
-          </TouchableOpacity>
-        </View>
-
-        {renderCategoryPills()}
-
-        <ScrollView
-          ref={scrollViewRef}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onScroll={handleScroll}
-          scrollEventThrottle={16}
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollViewContent}
-        >
-          <View style={styles.page}>
-            {renderTabContent('liked')}
-          </View>
-          <View style={styles.page}>
-            {renderTabContent('saved')}
-          </View>
-        </ScrollView>
-
-        <Modal
-          visible={selectedVideo !== null}
-          animationType="fade"
-          transparent={true}
-          onRequestClose={handleCloseVideo}
-        >
-          <View
-            style={styles.modalContainer}
-            {...panResponder.panHandlers}
-          >
-            {selectedVideo && (
-              <VideoPlayer
-                video={selectedVideo}
-                isVisible={true}
-                onVideoUpdate={handleVideoUpdate}
-              />
-            )}
-          </View>
-        </Modal>
-
-        <Modal
-          visible={showNewCategoryModal}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setShowNewCategoryModal(false)}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={styles.modalOverlay}
-          >
-            <View style={styles.newCategoryModal}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.newCategoryTitle}>New Category</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setNewCategory('');
-                    setShowNewCategoryModal(false);
-                  }}
-                  style={styles.closeButton}
-                >
-                  <Ionicons name="close" size={24} color={theme.colors.text.secondary} />
-                </TouchableOpacity>
-              </View>
-              <TextInput
-                style={styles.newCategoryInput}
-                value={newCategory}
-                onChangeText={setNewCategory}
-                placeholder="Enter category name"
-                placeholderTextColor={theme.colors.text.secondary}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={handleAddCategory}
-              />
-              <View style={styles.newCategoryButtons}>
-                <TouchableOpacity
-                  style={[styles.newCategoryButton, styles.cancelButton]}
-                  onPress={() => {
-                    setNewCategory('');
-                    setShowNewCategoryModal(false);
-                  }}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.newCategoryButton, styles.addButton]}
-                  onPress={handleAddCategory}
-                  disabled={!newCategory.trim()}
-                >
-                  <Text style={styles.addButtonText}>Add</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
-
-        <CategorySelectionModal
-          visible={showCategorySelectionModal}
-          onClose={() => {
-            setShowCategorySelectionModal(false);
-            setSelectedVideoForCategory(null);
-          }}
-          onSelect={handleCategorySelect}
-          categories={categories}
-          currentCategory={selectedVideoForCategory?.category}
-        />
       </View>
+      <View style={styles.profileContent}>
+        <View style={styles.avatarContainer}>
+          <Ionicons name="person-circle-outline" size={80} color={theme.colors.accent} />
+        </View>
+        <Text style={styles.email}>{user?.email}</Text>
+      </View>
+
+      <View style={styles.tabsContainer}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'liked' && styles.activeTab]}
+          onPress={() => handleTabPress('liked')}
+        >
+          <Ionicons
+            name="heart"
+            size={20}
+            color={activeTab === 'liked' ? theme.colors.accent : theme.colors.text.secondary}
+          />
+          <Text style={[
+            styles.tabText,
+            activeTab === 'liked' && styles.activeTabText
+          ]}>Liked</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'saved' && styles.activeTab]}
+          onPress={() => handleTabPress('saved')}
+        >
+          <Ionicons
+            name="bookmark"
+            size={20}
+            color={activeTab === 'saved' ? theme.colors.accent : theme.colors.text.secondary}
+          />
+          <Text style={[
+            styles.tabText,
+            activeTab === 'saved' && styles.activeTabText
+          ]}>Saved</Text>
+        </TouchableOpacity>
+      </View>
+
+      {renderCategoryPills()}
+
+      <ScrollView
+        ref={scrollViewRef}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollViewContent}
+      >
+        <View style={styles.page}>
+          {renderTabContent('liked')}
+        </View>
+        <View style={styles.page}>
+          {renderTabContent('saved')}
+        </View>
+      </ScrollView>
+
+      {selectedVideo && (
+        <Modal
+          visible={!!selectedVideo}
+          animationType="slide"
+          presentationStyle="fullScreen"
+        >
+          <View style={styles.modalContainer}>
+            <FlatList
+              data={activeTab === 'liked'
+                ? likedVideos.filter(v => getVideoState(v.id).isLiked)
+                : filteredSavedVideos.filter(v => getVideoState(v.id).isSaved)}
+              renderItem={({ item }) => (
+                <View style={styles.videoPlayerContainer}>
+                  <VideoPlayer
+                    video={item}
+                    isVisible={item.id === selectedVideo.id}
+                    onVideoUpdate={handleVideoUpdate}
+                    onHashtagPress={handleHashtagPress}
+                    showBackButton={true}
+                    onBackPress={handleCloseVideo}
+                  />
+                </View>
+              )}
+              keyExtractor={item => item.id}
+              pagingEnabled
+              showsVerticalScrollIndicator={false}
+              initialScrollIndex={currentVideoIndex}
+              getItemLayout={(data, index) => ({
+                length: Dimensions.get('window').height,
+                offset: Dimensions.get('window').height * index,
+                index,
+              })}
+              onViewableItemsChanged={({ viewableItems }) => {
+                if (viewableItems.length > 0) {
+                  setSelectedVideo(viewableItems[0].item);
+                  setCurrentVideoIndex(viewableItems[0].index || 0);
+                }
+              }}
+              viewabilityConfig={{
+                itemVisiblePercentThreshold: 50
+              }}
+              removeClippedSubviews={true}
+              windowSize={3}
+              maxToRenderPerBatch={2}
+              initialNumToRender={1}
+              vertical
+            />
+          </View>
+        </Modal>
+      )}
+
+      <Modal
+        visible={showNewCategoryModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowNewCategoryModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.newCategoryModal}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.newCategoryTitle}>New Category</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setNewCategory('');
+                  setShowNewCategoryModal(false);
+                }}
+                style={styles.closeButton}
+              >
+                <Ionicons name="close" size={24} color={theme.colors.text.secondary} />
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.newCategoryInput}
+              value={newCategory}
+              onChangeText={setNewCategory}
+              placeholder="Enter category name"
+              placeholderTextColor={theme.colors.text.secondary}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={handleAddCategory}
+            />
+            <View style={styles.newCategoryButtons}>
+              <TouchableOpacity
+                style={[styles.newCategoryButton, styles.cancelButton]}
+                onPress={() => {
+                  setNewCategory('');
+                  setShowNewCategoryModal(false);
+                }}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.newCategoryButton, styles.addButton]}
+                onPress={handleAddCategory}
+                disabled={!newCategory.trim()}
+              >
+                <Text style={styles.addButtonText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <CategorySelectionModal
+        visible={showCategorySelectionModal}
+        onClose={() => {
+          setShowCategorySelectionModal(false);
+          setSelectedVideoForCategory(null);
+        }}
+        onSelect={handleCategorySelect}
+        categories={categories}
+        currentCategory={selectedVideoForCategory?.category}
+      />
     </SafeScreen>
   );
 };
@@ -876,12 +928,26 @@ const styles = StyleSheet.create({
     paddingTop: theme.spacing.lg,
     paddingHorizontal: theme.spacing.lg,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: theme.spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  backButton: {
+    padding: theme.spacing.xs,
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: theme.typography.sizes.lg,
+    fontWeight: theme.typography.weights.bold,
+    color: theme.colors.text.primary,
+    textAlign: 'center',
+  },
   logoutButton: {
-    position: 'absolute',
-    top: theme.spacing.lg,
-    right: theme.spacing.lg,
-    zIndex: 1,
-    padding: theme.spacing.sm,
+    padding: theme.spacing.xs,
   },
   profileContent: {
     alignItems: 'center',
@@ -1039,7 +1105,7 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: '#000',
   },
   statsRow: {
     flexDirection: 'row',
@@ -1200,5 +1266,9 @@ const styles = StyleSheet.create({
     fontSize: theme.typography.sizes.md,
     fontWeight: theme.typography.weights.medium,
     textAlign: 'center',
+  },
+  videoPlayerContainer: {
+    height: Dimensions.get('window').height,
+    width: '100%',
   },
 }); 

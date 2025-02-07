@@ -35,6 +35,8 @@ interface VideoPlayerProps {
   isVisible: boolean;
   onVideoUpdate?: (videoId: string, updates: { liked?: boolean; saved?: boolean }) => void;
   onHashtagPress?: (hashtag: string) => void;
+  showBackButton?: boolean;
+  onBackPress?: () => void;
 }
 
 interface CategoryModalProps {
@@ -122,7 +124,7 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
   );
 };
 
-const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpdate, onHashtagPress }) => {
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpdate, onHashtagPress, showBackButton, onBackPress }) => {
   const { user } = useAuth();
   const { triggerRefresh } = useVideoList();
   const { getVideoState, updateVideoState } = useVideoState();
@@ -600,6 +602,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
         </View>
 
         <View style={styles.overlayContainer} pointerEvents="box-none">
+          {showBackButton && (
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={onBackPress}
+            >
+              <Ionicons
+                name="chevron-back"
+                size={30}
+                color={theme.colors.text.primary}
+              />
+            </TouchableOpacity>
+          )}
+
           {(loading || showBuffering) && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color={theme.colors.accent} />
@@ -880,6 +895,15 @@ const styles = StyleSheet.create({
     color: theme.colors.text.primary,
     fontSize: theme.typography.sizes.md,
     fontWeight: theme.typography.weights.medium,
+  },
+  backButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 30,
+    left: 20,
+    zIndex: 10,
+    padding: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 20,
   },
 });
 
