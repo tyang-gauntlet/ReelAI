@@ -28,19 +28,41 @@ show_usage() {
 # Function to process all videos
 process_all() {
     echo -e "${YELLOW}🎬 Processing all videos without thumbnails...${NC}"
-    response=$(curl -s -X POST \
+    
+    # Make the request and capture both response and HTTP code
+    response=$(curl -s -w "\n%{http_code}" \
         -H "Content-Type: application/json" \
+        -d '{"action": "process_all"}' \
         $FUNCTION_URL)
     
-    # Pretty print the JSON response
-    echo $response | python3 -m json.tool
-
-    # Check if the response contains an error
-    if echo $response | grep -q "error"; then
-        echo -e "${RED}❌ Error processing videos${NC}"
+    # Extract status code from last line
+    http_code=$(echo "$response" | tail -n1)
+    # Extract response body (all but last line)
+    body=$(echo "$response" | sed \$d)
+    
+    echo -e "${YELLOW}Response code: $http_code${NC}"
+    
+    # Check if we got a valid response
+    if [ $http_code -ne 200 ]; then
+        echo -e "${RED}❌ Error: Server returned code $http_code${NC}"
+        echo -e "${RED}Response: $body${NC}"
         exit 1
+    fi
+    
+    # Try to pretty print if it's JSON
+    if echo "$body" | jq . >/dev/null 2>&1; then
+        echo "$body" | jq .
+        # Check if the response contains an error
+        if echo "$body" | jq -e 'has("error")' >/dev/null; then
+            echo -e "${RED}❌ Error processing videos${NC}"
+            exit 1
+        else
+            echo -e "${GREEN}✅ Processing complete!${NC}"
+        fi
     else
-        echo -e "${GREEN}✅ Processing complete!${NC}"
+        echo -e "${RED}❌ Invalid JSON response:${NC}"
+        echo "$body"
+        exit 1
     fi
 }
 
@@ -48,26 +70,47 @@ process_all() {
 process_single() {
     local video_path=$1
     if [ -z "$video_path" ]; then
-        echo -e "${RED}❌ Error: Video path is required for single mode${NC}"
+        echo -e "${RED}❌ Video path is required for single mode${NC}"
         show_usage
         exit 1
     fi
 
     echo -e "${YELLOW}🎬 Processing video: $video_path${NC}"
-    response=$(curl -s -X POST \
+    
+    # Make the request and capture both response and HTTP code
+    response=$(curl -s -w "\n%{http_code}" \
         -H "Content-Type: application/json" \
         -d "{\"videoPath\": \"$video_path\"}" \
         $FUNCTION_URL)
     
-    # Pretty print the JSON response
-    echo $response | python3 -m json.tool
-
-    # Check if the response contains an error
-    if echo $response | grep -q "error"; then
-        echo -e "${RED}❌ Error processing video${NC}"
+    # Extract status code from last line
+    http_code=$(echo "$response" | tail -n1)
+    # Extract response body (all but last line)
+    body=$(echo "$response" | sed \$d)
+    
+    echo -e "${YELLOW}Response code: $http_code${NC}"
+    
+    # Check if we got a valid response
+    if [ $http_code -ne 200 ]; then
+        echo -e "${RED}❌ Error: Server returned code $http_code${NC}"
+        echo -e "${RED}Response: $body${NC}"
         exit 1
+    fi
+    
+    # Try to pretty print if it's JSON
+    if echo "$body" | jq . >/dev/null 2>&1; then
+        echo "$body" | jq .
+        # Check if the response contains an error
+        if echo "$body" | jq -e 'has("error")' >/dev/null; then
+            echo -e "${RED}❌ Error processing video${NC}"
+            exit 1
+        else
+            echo -e "${GREEN}✅ Processing complete!${NC}"
+        fi
     else
-        echo -e "${GREEN}✅ Processing complete!${NC}"
+        echo -e "${RED}❌ Invalid JSON response:${NC}"
+        echo "$body"
+        exit 1
     fi
 }
 

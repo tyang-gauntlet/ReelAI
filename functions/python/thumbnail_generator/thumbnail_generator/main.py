@@ -42,24 +42,33 @@ def health(request) -> tuple[str, int, Dict[str, str]]:
 
 
 @functions_framework.http
-def generate_video_thumbnail(request) -> Dict[str, Any]:
+def generate_video_thumbnail(request) -> tuple[str, int, Dict[str, str]]:
     """Cloud Function to generate video thumbnail.
 
     Handles two cases:
     1. Single video processing when videoPath is provided
-    2. Batch processing of all videos without thumbnails when no videoPath is provided
+    2. Batch processing of all videos without thumbnails when action=process_all
     """
     try:
         # Initialize Firebase
         firebase_config.initialize()
 
         # Get request data
-        data = request.get_json(silent=True) if request.is_json else None
+        request_json = request.get_json(silent=True)
+        if not request_json:
+            return (
+                json.dumps({"error": "No request data provided"}),
+                400,
+                {'Content-Type': 'application/json'}
+            )
+
+        logger.info(f"Received request: {request_json}")
 
         # Case 1: Process single video if videoPath is provided
-        if data and 'videoPath' in data:
-            video_path = data['videoPath']
+        if 'videoPath' in request_json:
+            video_path = request_json['videoPath']
             video_id = os.path.splitext(os.path.basename(video_path))[0]
+            logger.info(f"Processing single video: {video_path}")
 
             # Create video data structure
             video_data = {
@@ -69,28 +78,71 @@ def generate_video_thumbnail(request) -> Dict[str, Any]:
 
             # Process video
             with VideoProcessor(video_id, video_data) as processor:
-                return processor.process()
+                result = processor.process()
+                logger.info(f"Single video processing result: {result}")
+                return (
+                    json.dumps(result),
+                    200,
+                    {'Content-Type': 'application/json'}
+                )
 
         # Case 2: Process all videos without thumbnails
-        else:
+        elif request_json.get('action') == 'process_all':
+            logger.info(
+                "Starting batch processing of all videos without thumbnails")
             videos = get_videos_without_thumbnails()
+
             if not videos:
-                return {"message": "No videos found without thumbnails"}
+                logger.info("No videos found without thumbnails")
+                return (
+                    json.dumps(
+                        {"message": "No videos found without thumbnails"}),
+                    200,
+                    {'Content-Type': 'application/json'}
+                )
 
+            logger.info(f"Found {len(videos)} videos to process")
             results = []
-            for video in videos:
-                with VideoProcessor(video['id'], video) as processor:
-                    result = processor.process()
-                    results.append(result)
 
-            return {
-                "total": len(results),
-                "successful": len([r for r in results if r.get('success', False)]),
-                "failed": len([r for r in results if 'error' in r]),
+            for video_data in videos:
+                video_id = video_data['id']
+                logger.info(f"Processing video {video_id}")
+
+                try:
+                    with VideoProcessor(video_id, video_data) as processor:
+                        result = processor.process()
+                        results.append(result)
+                        logger.info(f"Processed video {video_id}: {result}")
+                except Exception as e:
+                    error_msg = f"Error processing video {video_id}: {str(e)}"
+                    logger.error(error_msg)
+                    results.append({"error": error_msg, "videoId": video_id})
+
+            response_data = {
+                "message": f"Processed {len(results)} videos",
                 "results": results
             }
+            return (
+                json.dumps(response_data),
+                200,
+                {'Content-Type': 'application/json'}
+            )
+
+        else:
+            error_msg = "Invalid request: must provide either videoPath or action=process_all"
+            logger.error(error_msg)
+            return (
+                json.dumps({"error": error_msg}),
+                400,
+                {'Content-Type': 'application/json'}
+            )
 
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Error in generate_video_thumbnail: {error_msg}")
-        return {"error": error_msg}
+        logger.exception("Full error details:")
+        return (
+            json.dumps({"error": error_msg}),
+            500,
+            {'Content-Type': 'application/json'}
+        )

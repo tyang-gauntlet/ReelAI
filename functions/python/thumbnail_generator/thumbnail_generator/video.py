@@ -254,20 +254,68 @@ def get_videos_without_thumbnails() -> list[Dict[str, Any]]:
         db = firestore.client()
         videos_ref = db.collection('videos')
 
-        # Query for videos without thumbnails
-        query = videos_ref.where('thumbnailUrl', '==', None).get()
+        logger.info("Querying for videos without thumbnails...")
+
+        # Simple query to get all videos first
+        all_videos = list(videos_ref.get())
+        logger.info(f"Found {len(all_videos)} total videos")
 
         results = []
-        for video in query:
+        for video in all_videos:
             video_data = video.to_dict()
             video_data['id'] = video.id
 
-            # Only include videos with a storage URL
-            if 'storageUrl' in video_data:
+            # Log raw video data for debugging
+            logger.info(f"\nChecking video {video_data['id']}:")
+            logger.info(f"All fields: {sorted(list(video_data.keys()))}")
+            logger.info(f"Raw data: {video_data}")
+
+            # Check if this video needs thumbnail processing
+            needs_thumbnail = False
+            reason = None
+
+            # 1. Check if video has a storage path
+            if not video_data.get('storagePath'):
+                logger.info(f"Skipping {video_data['id']} - no storagePath")
+                continue
+
+            # 2. Check if video already has a thumbnail
+            if not video_data.get('thumbnailUrl'):
+                needs_thumbnail = True
+                reason = "no thumbnailUrl"
+
+            # 3. Check processing status
+            status = video_data.get('processingStatus')
+            if status in ['pending', 'failed'] or status is None:
+                needs_thumbnail = True
+                reason = f"status is {status}"
+
+            if needs_thumbnail:
+                logger.info(
+                    f"Adding video {video_data['id']} to queue - {reason}")
                 results.append(video_data)
+            else:
+                logger.info(
+                    f"Skipping video {video_data['id']} - already has thumbnail")
+
+        if not results:
+            logger.info("\nNo videos need thumbnail generation")
+            logger.info("All videos either:")
+            logger.info("1. Already have thumbnails")
+            logger.info("2. Don't have required storagePath")
+        else:
+            logger.info(f"\nFound {len(results)} videos to process:")
+            for video in results:
+                logger.info(f"- {video['id']}")
+                logger.info(f"  Storage path: {video.get('storagePath')}")
+                logger.info(
+                    f"  Current thumbnail: {video.get('thumbnailUrl', 'none')}")
+                logger.info(
+                    f"  Processing status: {video.get('processingStatus', 'none')}")
 
         return results
 
     except Exception as e:
         logger.error(f"Error fetching videos without thumbnails: {str(e)}")
+        logger.exception("Full error details:")
         return []
