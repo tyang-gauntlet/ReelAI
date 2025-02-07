@@ -12,11 +12,12 @@ import { collection, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { generateThumbnailsForExistingVideos } from '../../services/videoService';
 import { useVideoList } from '../../contexts/VideoListContext';
-import { useNavigation, CompositeNavigationProp } from '@react-navigation/native';
+import { useNavigation, CompositeNavigationProp, useIsFocused } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { MainStackParamList, RootStackParamList } from '../../navigation/types';
 import VideoPlayer from '../../components/VideoPlayer/VideoPlayer';
+import { useVideoState } from '../../contexts/VideoStateContext';
 
 type ProfileScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainStackParamList, 'Profile'>,
@@ -98,6 +99,8 @@ export const ProfileScreen = () => {
   const navigation = useNavigation<ProfileScreenNavigationProp>();
   const { user, logout } = useAuth();
   const { refreshTrigger } = useVideoList();
+  const { videoStates, initializeVideoState, getVideoState } = useVideoState();
+  const isFocused = useIsFocused();
   const [activeTab, setActiveTab] = useState<TabType>('liked');
   const [likedVideos, setLikedVideos] = useState<Video[]>([]);
   const [savedVideos, setSavedVideos] = useState<Video[]>([]);
@@ -130,17 +133,24 @@ export const ProfileScreen = () => {
 
   useEffect(() => {
     const fetchVideos = async () => {
-      if (!user) return;
+      if (!user || !isFocused) return;
 
       try {
         setLoading(true);
-        if (activeTab === 'liked') {
-          const videos = await getLikedVideos(user.uid);
-          setLikedVideos(videos);
-        } else {
-          const videos = await getSavedVideos(user.uid);
-          setSavedVideos(videos);
-        }
+        const [liked, saved] = await Promise.all([
+          getLikedVideos(user.uid),
+          getSavedVideos(user.uid)
+        ]);
+
+        // Initialize video states with liked and saved status
+        initializeVideoState(
+          [...liked, ...saved],
+          liked.map(v => v.id),
+          saved.map(v => v.id)
+        );
+
+        setLikedVideos(liked);
+        setSavedVideos(saved);
       } catch (error) {
         console.error('Error fetching videos:', error);
         Alert.alert('Error', 'Failed to load videos');
@@ -150,7 +160,7 @@ export const ProfileScreen = () => {
     };
 
     fetchVideos();
-  }, [user, activeTab, refreshTrigger]);
+  }, [user, activeTab, refreshTrigger, isFocused, initializeVideoState]);
 
   const loadThumbnail = async (video: Video) => {
     if (
@@ -212,8 +222,54 @@ export const ProfileScreen = () => {
     setSelectedVideo(video);
   };
 
-  const handleCloseVideo = () => {
+  const handleVideoUpdate = (videoId: string, updates: { liked?: boolean; saved?: boolean }) => {
+    // Update liked videos
+    setLikedVideos(prev => prev.map(v => {
+      if (v.id === videoId) {
+        return {
+          ...v,
+          likes: v.likes + (updates.liked ? 1 : -1)
+        };
+      }
+      return v;
+    }));
+
+    // Update saved videos
+    setSavedVideos(prev => {
+      if (updates.saved === undefined) return prev;
+      if (updates.saved) {
+        // Add to saved if not already there
+        if (!prev.find(v => v.id === videoId)) {
+          const video = likedVideos.find(v => v.id === videoId);
+          if (video) return [...prev, video];
+        }
+      } else {
+        // Remove from saved
+        return prev.filter(v => v.id !== videoId);
+      }
+      return prev;
+    });
+  };
+
+  const handleCloseVideo = async () => {
     setSelectedVideo(null);
+    // Refresh videos when modal is closed to ensure we have the latest state
+    if (user) {
+      try {
+        setLoading(true);
+        if (activeTab === 'liked') {
+          const videos = await getLikedVideos(user.uid);
+          setLikedVideos(videos);
+        } else {
+          const videos = await getSavedVideos(user.uid);
+          setSavedVideos(videos);
+        }
+      } catch (error) {
+        console.error('Error refreshing videos:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
   };
 
   const handleThumbnailError = (videoId: string) => {
@@ -224,16 +280,24 @@ export const ProfileScreen = () => {
     });
   };
 
-  const renderVideoItem = ({ item: video }: { item: Video }) => (
-    <VideoItem
-      video={video}
-      onPress={handleVideoPress}
-      thumbnails={thumbnails}
-      loadingThumbnails={loadingThumbnails}
-      onLoadThumbnail={loadThumbnail}
-      onThumbnailError={handleThumbnailError}
-    />
-  );
+  const renderVideoItem = ({ item: video }: { item: Video }) => {
+    const state = getVideoState(video.id);
+    const updatedVideo = {
+      ...video,
+      likes: state.likes || video.likes,
+    };
+
+    return (
+      <VideoItem
+        video={updatedVideo}
+        onPress={handleVideoPress}
+        thumbnails={thumbnails}
+        loadingThumbnails={loadingThumbnails}
+        onLoadThumbnail={loadThumbnail}
+        onThumbnailError={handleThumbnailError}
+      />
+    );
+  };
 
   const renderContent = () => {
     if (loading) {
@@ -244,7 +308,10 @@ export const ProfileScreen = () => {
       );
     }
 
-    const videos = activeTab === 'liked' ? likedVideos : savedVideos;
+    // Filter videos based on current video states
+    const videos = activeTab === 'liked'
+      ? likedVideos.filter(v => getVideoState(v.id).isLiked)
+      : savedVideos.filter(v => getVideoState(v.id).isSaved);
 
     if (videos.length === 0) {
       return (
@@ -348,6 +415,7 @@ export const ProfileScreen = () => {
               <VideoPlayer
                 video={selectedVideo}
                 isVisible={true}
+                onVideoUpdate={handleVideoUpdate}
               />
             )}
           </View>

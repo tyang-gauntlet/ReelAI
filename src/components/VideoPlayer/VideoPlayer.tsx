@@ -17,6 +17,7 @@ import { Animated } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../../navigation/types';
+import { useVideoState } from '../../contexts/VideoStateContext';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MINIMUM_BUFFER_MS = 2000; // Minimum buffer size in milliseconds
@@ -32,15 +33,20 @@ interface VideoPlayerProps {
     storagePath?: string;
   };
   isVisible: boolean;
+  onVideoUpdate?: (videoId: string, updates: { liked?: boolean; saved?: boolean }) => void;
 }
 
-const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpdate }) => {
   const { user } = useAuth();
   const { triggerRefresh } = useVideoList();
+  const { getVideoState, updateVideoState } = useVideoState();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const [liked, setLiked] = useState(false);
-  const [likeCount, setLikeCount] = useState(video.likes || 0);
-  const [saved, setSaved] = useState(false);
+
+  // Initialize state from VideoStateContext
+  const videoState = getVideoState(video.id);
+  const [liked, setLiked] = useState(videoState.isLiked);
+  const [likeCount, setLikeCount] = useState(videoState.likes || video.likes);
+  const [saved, setSaved] = useState(videoState.isSaved);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [buffering, setBuffering] = useState(false);
@@ -50,21 +56,22 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   const [playerReady, setPlayerReady] = useState(false);
   const [userPaused, setUserPaused] = useState(false);
   const [debouncedIsVisible, setDebouncedIsVisible] = useState(isVisible);
+  const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [showLikeAnimation, setShowLikeAnimation] = useState(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
+
   const bufferingTimeout = useRef<NodeJS.Timeout>();
   const bufferIndicatorTimeout = useRef<NodeJS.Timeout>();
   const lastPlayAttempt = useRef<number>(0);
   const visibilityTimeout = useRef<NodeJS.Timeout>();
-  const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number } | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
   const expandAnim = useRef(new Animated.Value(0)).current;
   const scaleAnims = useRef(Array.from({ length: 4 }, () => new Animated.Value(0))).current;
   const activeIndexAnim = useRef(new Animated.Value(0)).current;
   const lastTap = useRef<number>(0);
   const doubleTapTimeout = useRef<NodeJS.Timeout>();
-  const [showLikeAnimation, setShowLikeAnimation] = useState(false);
   const likeAnimationTimeout = useRef<NodeJS.Timeout>();
   const likeAnimScale = useRef(new Animated.Value(0)).current;
-  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
 
   const player = useVideoPlayer({
     uri: '',
@@ -305,23 +312,40 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     try {
       if (!user) return;
 
-      // Optimistically update UI
-      setLiked(!liked);
-      setLikeCount(current => current + (liked ? -1 : 1));
+      const newLiked = !liked;
+      const newLikeCount = likeCount + (newLiked ? 1 : -1);
+
+      // Optimistically update UI and context
+      setLiked(newLiked);
+      setLikeCount(newLikeCount);
+      updateVideoState(video.id, {
+        isLiked: newLiked,
+        likes: newLikeCount
+      });
 
       if (liked) {
         await unlikeVideo(user.uid, video.id);
       } else {
         await likeVideo(user.uid, video.id);
       }
+
+      // Notify parent component of the update
+      onVideoUpdate?.(video.id, { liked: newLiked });
+
+      // Trigger refresh of video lists
+      triggerRefresh();
     } catch (error) {
-      // Revert UI on error
+      // Revert UI and context on error
       setLiked(liked);
-      setLikeCount(current => current + (liked ? 1 : -1));
+      setLikeCount(likeCount);
+      updateVideoState(video.id, {
+        isLiked: liked,
+        likes: likeCount
+      });
       console.error('Error toggling like:', error);
       Alert.alert('Error', 'Failed to update like status');
     }
-  }, [video.id, liked, user]);
+  }, [video.id, liked, likeCount, user, triggerRefresh, onVideoUpdate, updateVideoState]);
 
   const handleDoubleTap = useCallback(() => {
     if (!liked) {
@@ -393,8 +417,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     try {
       if (!user) return;
 
-      // Optimistically update UI
-      setSaved(!saved);
+      const newSaved = !saved;
+
+      // Optimistically update UI and context
+      setSaved(newSaved);
+      updateVideoState(video.id, {
+        isSaved: newSaved
+      });
 
       if (!saved) {
         await saveVideo(user.uid, video.id);
@@ -402,15 +431,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
         await unsaveVideo(user.uid, video.id);
       }
 
+      // Notify parent component of the update
+      onVideoUpdate?.(video.id, { saved: newSaved });
+
       // Trigger refresh of video lists
       triggerRefresh();
     } catch (error) {
-      // Revert UI on error
+      // Revert UI and context on error
       setSaved(saved);
+      updateVideoState(video.id, {
+        isSaved: saved
+      });
       console.error('Error saving video:', error);
       Alert.alert('Error', 'Failed to update save status');
     }
-  }, [video.id, user, saved, triggerRefresh]);
+  }, [video.id, user, saved, triggerRefresh, onVideoUpdate, updateVideoState]);
 
   // Determine content fit based on video dimensions
   const getContentFit = useCallback(() => {

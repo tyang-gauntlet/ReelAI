@@ -4,14 +4,17 @@ import { NavigationProvider } from './src/contexts/NavigationContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { ensureDemoAccount, clearAuthState, ensureTestAccount } from './src/config/firebase';
 import { VideoListProvider } from './src/contexts/VideoListContext';
+import { VideoStateProvider } from './src/contexts/VideoStateContext';
 
 export default function App() {
   return (
     <SafeAreaProvider>
       <NavigationProvider>
-        <VideoListProvider>
-          <RootNavigator />
-        </VideoListProvider>
+        <VideoStateProvider>
+          <VideoListProvider>
+            <RootNavigator />
+          </VideoListProvider>
+        </VideoStateProvider>
       </NavigationProvider>
     </SafeAreaProvider>
   );
