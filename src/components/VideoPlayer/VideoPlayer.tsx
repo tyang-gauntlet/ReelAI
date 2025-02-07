@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Platform, Dimensions, ActivityIndicator, Alert } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, Platform, Dimensions, ActivityIndicator, Alert, Modal, TextInput } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { Video as VideoType } from '../VideoFeed/VideoFeed';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
@@ -36,6 +36,91 @@ interface VideoPlayerProps {
   onVideoUpdate?: (videoId: string, updates: { liked?: boolean; saved?: boolean }) => void;
   onHashtagPress?: (hashtag: string) => void;
 }
+
+interface CategoryModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onSave: (category: string) => void;
+  existingCategory?: string;
+}
+
+const CategoryModal: React.FC<CategoryModalProps> = ({
+  visible,
+  onClose,
+  onSave,
+  existingCategory
+}) => {
+  const [category, setCategory] = useState(existingCategory || '');
+  const [commonCategories] = useState([
+    'Favorites',
+    'Watch Later',
+    'Highlights',
+    'Training',
+    'Reference'
+  ]);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.categoryModalContainer}>
+        <View style={styles.categoryModalContent}>
+          <Text style={styles.categoryModalTitle}>
+            {existingCategory ? 'Edit Category' : 'Add to Category'}
+          </Text>
+
+          <View style={styles.commonCategoriesContainer}>
+            {commonCategories.map((cat) => (
+              <TouchableOpacity
+                key={cat}
+                style={[
+                  styles.commonCategoryPill,
+                  category === cat && styles.selectedCommonCategoryPill
+                ]}
+                onPress={() => setCategory(cat)}
+              >
+                <Text style={[
+                  styles.commonCategoryText,
+                  category === cat && styles.selectedCommonCategoryText
+                ]}>{cat}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <TextInput
+            style={styles.categoryInput}
+            value={category}
+            onChangeText={setCategory}
+            placeholder="Enter custom category"
+            placeholderTextColor={theme.colors.text.secondary}
+          />
+
+          <View style={styles.categoryModalButtons}>
+            <TouchableOpacity
+              style={[styles.categoryModalButton, styles.categoryModalCancelButton]}
+              onPress={onClose}
+            >
+              <Text style={styles.categoryModalButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.categoryModalButton, styles.categoryModalSaveButton]}
+              onPress={() => {
+                onSave(category);
+                onClose();
+              }}
+              disabled={!category.trim()}
+            >
+              <Text style={styles.categoryModalButtonText}>Save</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpdate, onHashtagPress }) => {
   const { user } = useAuth();
@@ -414,39 +499,25 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     }
   }, [video.storagePath]);
 
-  const handleSave = useCallback(async () => {
+  const handleSave = async () => {
+    if (!user) {
+      Alert.alert('Error', 'You must be logged in to save videos');
+      return;
+    }
+
     try {
-      if (!user) return;
-
-      const newSaved = !saved;
-
-      // Optimistically update UI and context
-      setSaved(newSaved);
-      updateVideoState(video.id, {
-        isSaved: newSaved
-      });
-
-      if (!saved) {
-        await saveVideo(user.uid, video.id);
-      } else {
-        await unsaveVideo(user.uid, video.id);
+      await saveVideo(user.uid, video.id);
+      setSaved(true);
+      updateVideoState(video.id, { isSaved: true });
+      if (onVideoUpdate) {
+        onVideoUpdate(video.id, { saved: true });
       }
-
-      // Notify parent component of the update
-      onVideoUpdate?.(video.id, { saved: newSaved });
-
-      // Trigger refresh of video lists
       triggerRefresh();
     } catch (error) {
-      // Revert UI and context on error
-      setSaved(saved);
-      updateVideoState(video.id, {
-        isSaved: saved
-      });
       console.error('Error saving video:', error);
-      Alert.alert('Error', 'Failed to update save status');
+      Alert.alert('Error', 'Failed to save video');
     }
-  }, [video.id, user, saved, triggerRefresh, onVideoUpdate, updateVideoState]);
+  };
 
   // Determine content fit based on video dimensions
   const getContentFit = useCallback(() => {
@@ -728,6 +799,87 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.75)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 3,
+  },
+  categoryModalContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  categoryModalContent: {
+    backgroundColor: theme.colors.background,
+    borderTopLeftRadius: theme.borderRadius.lg,
+    borderTopRightRadius: theme.borderRadius.lg,
+    padding: theme.spacing.lg,
+    minHeight: 300,
+  },
+  categoryModalTitle: {
+    fontSize: theme.typography.sizes.lg,
+    fontWeight: theme.typography.weights.bold,
+    color: theme.colors.text.primary,
+    marginBottom: theme.spacing.lg,
+    textAlign: 'center',
+  },
+  commonCategoriesContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: theme.spacing.lg,
+    marginHorizontal: -4,
+    alignItems: 'center',
+  },
+  commonCategoryPill: {
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    margin: 4,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 28,
+  },
+  selectedCommonCategoryPill: {
+    backgroundColor: 'transparent',
+    borderColor: theme.colors.accent,
+  },
+  commonCategoryText: {
+    color: theme.colors.text.secondary,
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 16,
+  },
+  selectedCommonCategoryText: {
+    color: theme.colors.accent,
+  },
+  categoryInput: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.md,
+    color: theme.colors.text.primary,
+    marginBottom: theme.spacing.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  categoryModalButtons: {
+    flexDirection: 'row',
+    gap: theme.spacing.md,
+  },
+  categoryModalButton: {
+    flex: 1,
+    paddingVertical: theme.spacing.md,
+    borderRadius: theme.borderRadius.md,
+    alignItems: 'center',
+  },
+  categoryModalCancelButton: {
+    backgroundColor: theme.colors.surface,
+  },
+  categoryModalSaveButton: {
+    backgroundColor: theme.colors.accent,
+  },
+  categoryModalButtonText: {
+    color: theme.colors.text.primary,
+    fontSize: theme.typography.sizes.md,
+    fontWeight: theme.typography.weights.medium,
   },
 });
 

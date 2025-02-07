@@ -31,23 +31,31 @@ export const saveVideo = async (userId: string, videoId: string, category?: stri
   }
 };
 
-export const getSavedVideos = async (userId: string): Promise<Video[]> => {
+export const getSavedVideos = async (
+  userId: string,
+): Promise<(Video & { category?: string })[]> => {
   try {
     const savedRef = collection(db, 'savedVideos');
     const q = query(savedRef, where('userId', '==', userId));
     const savedSnapshot = await getDocs(q);
 
-    // Get all video IDs that the user has saved
-    const videoIds = savedSnapshot.docs.map(doc => doc.data().videoId);
+    // Create a map to deduplicate videos by videoId
+    const videoMap = new Map<string, { category?: string }>();
 
-    if (videoIds.length === 0) return [];
+    // Get unique video IDs and their latest category
+    savedSnapshot.docs.forEach(doc => {
+      const data = doc.data();
+      videoMap.set(data.videoId, { category: data.category });
+    });
+
+    if (videoMap.size === 0) return [];
 
     // Fetch the actual video documents
     const videosRef = collection(db, 'videos');
-    const videos: Video[] = [];
+    const videos: (Video & { category?: string })[] = [];
 
     // Fetch videos one by one since Firestore doesn't support 'in' queries on document IDs
-    for (const videoId of videoIds) {
+    for (const [videoId, { category }] of videoMap.entries()) {
       const videoDoc = doc(videosRef, videoId);
       const videoSnapshot = await getDoc(videoDoc);
 
@@ -56,7 +64,8 @@ export const getSavedVideos = async (userId: string): Promise<Video[]> => {
           id: videoSnapshot.id,
           ...videoSnapshot.data(),
           createdAt: videoSnapshot.data().createdAt?.toDate(),
-        } as Video);
+          category,
+        } as Video & { category?: string });
       }
     }
 
@@ -90,6 +99,42 @@ export const unsaveVideo = async (userId: string, videoId: string) => {
     }
   } catch (error) {
     console.error('Error unsaving video:', error);
+    throw error;
+  }
+};
+
+export const cleanupDuplicateSavedVideos = async (userId: string) => {
+  try {
+    const savedRef = collection(db, 'savedVideos');
+    const q = query(savedRef, where('userId', '==', userId));
+    const snapshot = await getDocs(q);
+
+    // Create a map to track videos by their videoId
+    const videoMap = new Map<string, { docId: string; videoId: string }>();
+    const toDelete: string[] = [];
+
+    // First pass: find all entries and keep track of duplicates
+    snapshot.docs.forEach(doc => {
+      const data = doc.data();
+      const key = data.videoId;
+
+      if (!videoMap.has(key)) {
+        // First time seeing this videoId
+        videoMap.set(key, { docId: doc.id, videoId: data.videoId });
+      } else {
+        // It's a duplicate, mark for deletion
+        toDelete.push(doc.id);
+      }
+    });
+
+    // Delete all duplicates
+    const deletePromises = toDelete.map(docId => deleteDoc(doc(db, 'savedVideos', docId)));
+
+    await Promise.all(deletePromises);
+    console.log(`Cleaned up ${deletePromises.length} duplicate videos`);
+    return deletePromises.length;
+  } catch (error) {
+    console.error('Error cleaning up duplicates:', error);
     throw error;
   }
 };

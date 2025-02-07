@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, FlatList, Image, Dimensions, ActivityIndicator, Modal, PanResponder, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, FlatList, Image, Dimensions, ActivityIndicator, Modal, PanResponder, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeScreen } from '../../components/layout/SafeScreen';
 import { useAuth } from '../../hooks/useAuth';
 import { theme } from '../../styles/theme';
 import { Ionicons } from '@expo/vector-icons';
-import { getSavedVideos } from '../../services/saveVideoService';
+import { getSavedVideos, cleanupDuplicateSavedVideos } from '../../services/saveVideoService';
 import { getLikedVideos } from '../../services/interactionService';
-import { Video } from '../../components/VideoFeed/VideoFeed';
+import { Video as VideoType } from '../../components/VideoFeed/VideoFeed';
 import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import { collection, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
@@ -18,6 +18,7 @@ import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { MainStackParamList, RootStackParamList } from '../../navigation/types';
 import VideoPlayer from '../../components/VideoPlayer/VideoPlayer';
 import { useVideoState } from '../../contexts/VideoStateContext';
+import { saveVideo } from '../../services/saveVideoService';
 
 type ProfileScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainStackParamList, 'Profile'>,
@@ -26,23 +27,37 @@ type ProfileScreenNavigationProp = CompositeNavigationProp<
 
 type TabType = 'liked' | 'saved';
 
+interface SavedVideo extends VideoType {
+  category?: string;
+}
+
+interface Video {
+  id: string;
+  title: string;
+  likes: number;
+  category?: string;
+}
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PAGE_WIDTH = SCREEN_WIDTH;
 const VIDEO_WIDTH = (SCREEN_WIDTH - theme.spacing.lg * 4) / 2;
 const VIDEO_HEIGHT = VIDEO_WIDTH * 1.3;
 
 const VideoItem = React.memo(({
   video,
   onPress,
+  onLongPress,
   thumbnails,
   loadingThumbnails,
   onLoadThumbnail,
   onThumbnailError
 }: {
-  video: Video;
-  onPress: (video: Video) => void;
+  video: SavedVideo;
+  onPress: (video: SavedVideo) => void;
+  onLongPress?: (video: SavedVideo) => void;
   thumbnails: { [key: string]: string };
   loadingThumbnails: { [key: string]: boolean };
-  onLoadThumbnail: (video: Video) => void;
+  onLoadThumbnail: (video: SavedVideo) => void;
   onThumbnailError: (videoId: string) => void;
 }) => {
   useEffect(() => {
@@ -53,6 +68,8 @@ const VideoItem = React.memo(({
     <TouchableOpacity
       style={styles.videoThumbnail}
       onPress={() => onPress(video)}
+      onLongPress={() => onLongPress?.(video)}
+      delayLongPress={500}
     >
       <View style={styles.thumbnailContainer}>
         {thumbnails[video.id] ? (
@@ -101,18 +118,27 @@ const VideoItem = React.memo(({
 export const ProfileScreen = () => {
   const navigation = useNavigation<ProfileScreenNavigationProp>();
   const { user, logout } = useAuth();
-  const { refreshTrigger } = useVideoList();
+  const { refreshTrigger, triggerRefresh } = useVideoList();
   const { videoStates, initializeVideoState, getVideoState } = useVideoState();
   const isFocused = useIsFocused();
   const [activeTab, setActiveTab] = useState<TabType>('liked');
-  const [likedVideos, setLikedVideos] = useState<Video[]>([]);
-  const [savedVideos, setSavedVideos] = useState<Video[]>([]);
+  const [likedVideos, setLikedVideos] = useState<VideoType[]>([]);
+  const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [thumbnails, setThumbnails] = useState<{ [key: string]: string }>({});
   const [loadingThumbnails, setLoadingThumbnails] = useState<{ [key: string]: boolean }>({});
   const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
-  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [selectedVideo, setSelectedVideo] = useState<VideoType | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
+  const [showNewCategoryModal, setShowNewCategoryModal] = useState(false);
+  const [newCategory, setNewCategory] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedVideoForCategory, setSelectedVideoForCategory] = useState<SavedVideo | null>(null);
+  const [showCategorySelectionModal, setShowCategorySelectionModal] = useState(false);
+
+  // Add lastActiveTab ref to remember the last active tab
+  const lastActiveTab = useRef<TabType>('liked');
 
   const panResponder = React.useRef(
     PanResponder.create({
@@ -136,6 +162,12 @@ export const ProfileScreen = () => {
   ).current;
 
   useEffect(() => {
+    if (activeTab !== lastActiveTab.current) {
+      lastActiveTab.current = activeTab;
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
     const fetchVideos = async () => {
       if (!user || !isFocused) return;
 
@@ -146,7 +178,6 @@ export const ProfileScreen = () => {
           getSavedVideos(user.uid)
         ]);
 
-        // Initialize video states with liked and saved status
         initializeVideoState(
           [...liked, ...saved],
           liked.map(v => v.id),
@@ -155,6 +186,20 @@ export const ProfileScreen = () => {
 
         setLikedVideos(liked);
         setSavedVideos(saved);
+
+        // After setting the videos, update the UI state
+        if (lastActiveTab.current === 'saved') {
+          setActiveTab('saved');
+          // Use requestAnimationFrame to ensure the ScrollView is ready
+          requestAnimationFrame(() => {
+            if (scrollViewRef.current) {
+              scrollViewRef.current.scrollTo({
+                x: PAGE_WIDTH,
+                animated: false
+              });
+            }
+          });
+        }
       } catch (error) {
         console.error('Error fetching videos:', error);
         Alert.alert('Error', 'Failed to load videos');
@@ -166,7 +211,23 @@ export const ProfileScreen = () => {
     fetchVideos();
   }, [user, refreshTrigger, isFocused, initializeVideoState]);
 
-  const loadThumbnail = async (video: Video) => {
+  // Get unique categories from saved videos
+  const categories = React.useMemo(() => {
+    const uniqueCategories = new Set(savedVideos.map(video => video.category || 'Uncategorized'));
+    return Array.from(uniqueCategories).sort();
+  }, [savedVideos]);
+
+  // Filter saved videos by category
+  const filteredSavedVideos = React.useMemo(() => {
+    if (!selectedCategory) return savedVideos;
+    return savedVideos.filter(video =>
+      selectedCategory === 'Uncategorized'
+        ? !video.category
+        : video.category === selectedCategory
+    );
+  }, [savedVideos, selectedCategory]);
+
+  const loadThumbnail = async (video: VideoType) => {
     if (
       thumbnails[video.id] ||
       loadingThumbnails[video.id] ||
@@ -202,7 +263,7 @@ export const ProfileScreen = () => {
     }
   };
 
-  const handleVideoPress = (video: Video) => {
+  const handleVideoPress = (video: VideoType) => {
     setSelectedVideo(video);
   };
 
@@ -264,25 +325,171 @@ export const ProfileScreen = () => {
     });
   };
 
+  // Add effect to sync scroll position with active tab when screen is focused
+  useEffect(() => {
+    if (isFocused && scrollViewRef.current) {
+      // Use a small timeout to ensure the scroll view is ready
+      setTimeout(() => {
+        scrollViewRef.current?.scrollTo({
+          x: activeTab === 'liked' ? 0 : SCREEN_WIDTH - theme.spacing.lg * 2,
+          animated: false
+        });
+      }, 50);
+    }
+  }, [isFocused, activeTab]);
+
+  // Update handleTabPress to be more reliable
   const handleTabPress = (tab: TabType) => {
     setActiveTab(tab);
-    // Scroll to the appropriate page when tab is pressed
-    scrollViewRef.current?.scrollTo({
-      x: tab === 'liked' ? 0 : SCREEN_WIDTH,
-      animated: true
-    });
-  };
-
-  const handleScroll = (event: any) => {
-    const offsetX = event.nativeEvent.contentOffset.x;
-    if (offsetX >= SCREEN_WIDTH / 2 && activeTab !== 'saved') {
-      setActiveTab('saved');
-    } else if (offsetX < SCREEN_WIDTH / 2 && activeTab !== 'liked') {
-      setActiveTab('liked');
+    if (scrollViewRef.current) {
+      scrollViewRef.current.scrollTo({
+        x: tab === 'liked' ? 0 : SCREEN_WIDTH - theme.spacing.lg * 2,
+        animated: true
+      });
     }
   };
 
-  const renderVideoItem = ({ item: video }: { item: Video }) => {
+  // Update handleScroll to be more precise
+  const handleScroll = (event: any) => {
+    const offsetX = event.nativeEvent.contentOffset.x;
+    const halfWidth = (SCREEN_WIDTH - theme.spacing.lg * 2) / 2;
+    const newTab = offsetX >= halfWidth ? 'saved' : 'liked';
+    if (newTab !== activeTab) {
+      setActiveTab(newTab);
+    }
+  };
+
+  const handleUpdateCategory = async (videoId: string, category: string) => {
+    if (!user) return;
+    try {
+      await saveVideo(user.uid, videoId, category);
+      setSavedVideos(prev => prev.map(v =>
+        v.id === videoId ? { ...v, category } : v
+      ));
+      triggerRefresh();
+    } catch (error) {
+      console.error('Error updating category:', error);
+      Alert.alert('Error', 'Failed to update category');
+    }
+  };
+
+  const handleAddCategory = () => {
+    if (!newCategory.trim()) return;
+
+    const trimmedCategory = newCategory.trim();
+
+    // Add an empty video entry with the new category to ensure it shows up in pills
+    setSavedVideos(prev => {
+      const hasCategory = prev.some(v => v.category === trimmedCategory);
+      if (!hasCategory) {
+        // Create a temporary SavedVideo object
+        const tempVideo: SavedVideo = {
+          id: `temp-${Date.now()}`,
+          title: '',
+          likes: 0,
+          category: trimmedCategory,
+          storageUrl: '',
+          createdAt: new Date(),
+          userId: user?.uid || '',
+        };
+        return [...prev, tempVideo];
+      }
+      return prev;
+    });
+
+    // Remove the setSelectedCategory call so it doesn't switch to the new category
+    setNewCategory('');
+    setShowNewCategoryModal(false);
+  };
+
+  // Add a new function to handle assigning categories to videos
+  const handleAssignCategory = async (videoId: string, category: string | null) => {
+    if (!user) return;
+    try {
+      if (category) {
+        await saveVideo(user.uid, videoId, category);
+      }
+      setSavedVideos(prev => prev.map(v =>
+        v.id === videoId ? { ...v, category: category || undefined } : v
+      ));
+      triggerRefresh();
+    } catch (error) {
+      console.error('Error updating category:', error);
+      Alert.alert('Error', 'Failed to update category');
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (!user) return;
+    setRefreshing(true);
+    try {
+      // Clean up duplicates first if it's the test account
+      if (user.email === 'test@realai.com') {
+        await cleanupDuplicateSavedVideos(user.uid);
+      }
+
+      const [liked, saved] = await Promise.all([
+        getLikedVideos(user.uid),
+        getSavedVideos(user.uid)
+      ]);
+
+      initializeVideoState(
+        [...liked, ...saved],
+        liked.map(v => v.id),
+        saved.map(v => v.id)
+      );
+
+      setLikedVideos(liked);
+      setSavedVideos(saved);
+    } catch (error) {
+      console.error('Error refreshing videos:', error);
+      Alert.alert('Error', 'Failed to refresh videos');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleLongPress = (video: VideoType) => {
+    if (activeTab === 'saved') {
+      setSelectedVideoForCategory(video);
+      setShowCategorySelectionModal(true);
+    }
+  };
+
+  const handleCategorySelect = async (category: string | null) => {
+    if (!selectedVideoForCategory || !user) return;
+
+    try {
+      await handleAssignCategory(selectedVideoForCategory.id, category);
+      setShowCategorySelectionModal(false);
+      setSelectedVideoForCategory(null);
+
+      // Update the saved videos list without changing tabs
+      const updatedSaved = await getSavedVideos(user.uid);
+      setSavedVideos(updatedSaved);
+    } catch (error) {
+      console.error('Error changing category:', error);
+      Alert.alert('Error', 'Failed to change category');
+    }
+  };
+
+  const handleCleanupDuplicates = async () => {
+    if (!user) return;
+    try {
+      setLoading(true);
+      const removedCount = await cleanupDuplicateSavedVideos(user.uid);
+      Alert.alert('Success', `Removed ${removedCount} duplicate videos`);
+      // Refresh the list after cleanup
+      handleRefresh();
+    } catch (error) {
+      console.error('Error cleaning up duplicates:', error);
+      Alert.alert('Error', 'Failed to clean up duplicates');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderVideoItem = ({ item: video }: { item: VideoType }) => {
     const state = getVideoState(video.id);
     const updatedVideo = {
       ...video,
@@ -293,6 +500,7 @@ export const ProfileScreen = () => {
       <VideoItem
         video={updatedVideo}
         onPress={handleVideoPress}
+        onLongPress={handleLongPress}
         thumbnails={thumbnails}
         loadingThumbnails={loadingThumbnails}
         onLoadThumbnail={loadThumbnail}
@@ -301,16 +509,65 @@ export const ProfileScreen = () => {
     );
   };
 
+  const renderCategoryPills = () => {
+    if (activeTab !== 'saved' || categories.length === 0) return null;
+
+    return (
+      <View style={styles.categoryPillsWrapper}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.categoryPillsScroll}
+          contentContainerStyle={styles.categoryPillsContainer}
+        >
+          <TouchableOpacity
+            style={[
+              styles.categoryPill,
+              !selectedCategory && styles.selectedCategoryPill
+            ]}
+            onPress={() => setSelectedCategory(null)}
+          >
+            <Text style={[
+              styles.categoryPillText,
+              !selectedCategory && styles.selectedCategoryPillText
+            ]}>All</Text>
+          </TouchableOpacity>
+          {categories.map((category) => (
+            <TouchableOpacity
+              key={category}
+              style={[
+                styles.categoryPill,
+                selectedCategory === category && styles.selectedCategoryPill
+              ]}
+              onPress={() => setSelectedCategory(category)}
+            >
+              <Text style={[
+                styles.categoryPillText,
+                selectedCategory === category && styles.selectedCategoryPillText
+              ]}>{category}</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity
+            style={[styles.categoryPill, styles.addCategoryPill]}
+            onPress={() => setShowNewCategoryModal(true)}
+          >
+            <Ionicons name="add" size={16} color={theme.colors.accent} />
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  };
+
   const renderTabContent = (tabType: TabType) => {
     const videos = tabType === 'liked'
       ? likedVideos.filter(v => getVideoState(v.id).isLiked)
-      : savedVideos.filter(v => getVideoState(v.id).isSaved);
+      : filteredSavedVideos.filter(v => getVideoState(v.id).isSaved);
 
     if (videos.length === 0) {
       return (
         <View style={styles.centerContent}>
           <Text style={styles.emptyText}>
-            No {tabType} videos yet
+            No {tabType} videos{selectedCategory ? ` in ${selectedCategory}` : ''} yet
           </Text>
         </View>
       );
@@ -328,9 +585,90 @@ export const ProfileScreen = () => {
         maxToRenderPerBatch={4}
         windowSize={5}
         removeClippedSubviews={true}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
       />
     );
   };
+
+  const CategorySelectionModal = ({
+    visible,
+    onClose,
+    onSelect,
+    categories,
+    currentCategory,
+  }: {
+    visible: boolean;
+    onClose: () => void;
+    onSelect: (category: string | null) => void;
+    categories: string[];
+    currentCategory?: string | null;
+  }) => (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.newCategoryModal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.newCategoryTitle}>Move to Category</Text>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Ionicons name="close" size={24} color={theme.colors.text.secondary} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.categorySelectionList}>
+            <TouchableOpacity
+              style={[
+                styles.categorySelectionItem,
+                currentCategory === null && styles.selectedCategoryItem
+              ]}
+              onPress={() => onSelect(null)}
+            >
+              <Text style={[
+                styles.categorySelectionText,
+                currentCategory === null && styles.selectedCategoryText
+              ]}>Uncategorized</Text>
+              {currentCategory === null && (
+                <Ionicons name="checkmark" size={20} color={theme.colors.accent} />
+              )}
+            </TouchableOpacity>
+            {categories.filter(cat => cat !== 'Uncategorized').map((category) => (
+              <TouchableOpacity
+                key={category}
+                style={[
+                  styles.categorySelectionItem,
+                  currentCategory === category && styles.selectedCategoryItem
+                ]}
+                onPress={() => onSelect(category)}
+              >
+                <Text style={[
+                  styles.categorySelectionText,
+                  currentCategory === category && styles.selectedCategoryText
+                ]}>{category}</Text>
+                {currentCategory === category && (
+                  <Ionicons name="checkmark" size={20} color={theme.colors.accent} />
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          <TouchableOpacity
+            style={styles.newCategoryButton}
+            onPress={() => {
+              onClose();
+              setShowNewCategoryModal(true);
+            }}
+          >
+            <Ionicons name="add-circle-outline" size={20} color={theme.colors.accent} />
+            <Text style={styles.newCategoryButtonText}>New Category</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
 
   if (loading) {
     return (
@@ -393,12 +731,14 @@ export const ProfileScreen = () => {
           </TouchableOpacity>
         </View>
 
+        {renderCategoryPills()}
+
         <ScrollView
           ref={scrollViewRef}
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
-          onMomentumScrollEnd={handleScroll}
+          onScroll={handleScroll}
           scrollEventThrottle={16}
           style={styles.scrollView}
           contentContainerStyle={styles.scrollViewContent}
@@ -430,6 +770,72 @@ export const ProfileScreen = () => {
             )}
           </View>
         </Modal>
+
+        <Modal
+          visible={showNewCategoryModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowNewCategoryModal(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={styles.modalOverlay}
+          >
+            <View style={styles.newCategoryModal}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.newCategoryTitle}>New Category</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setNewCategory('');
+                    setShowNewCategoryModal(false);
+                  }}
+                  style={styles.closeButton}
+                >
+                  <Ionicons name="close" size={24} color={theme.colors.text.secondary} />
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={styles.newCategoryInput}
+                value={newCategory}
+                onChangeText={setNewCategory}
+                placeholder="Enter category name"
+                placeholderTextColor={theme.colors.text.secondary}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleAddCategory}
+              />
+              <View style={styles.newCategoryButtons}>
+                <TouchableOpacity
+                  style={[styles.newCategoryButton, styles.cancelButton]}
+                  onPress={() => {
+                    setNewCategory('');
+                    setShowNewCategoryModal(false);
+                  }}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.newCategoryButton, styles.addButton]}
+                  onPress={handleAddCategory}
+                  disabled={!newCategory.trim()}
+                >
+                  <Text style={styles.addButtonText}>Add</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        <CategorySelectionModal
+          visible={showCategorySelectionModal}
+          onClose={() => {
+            setShowCategorySelectionModal(false);
+            setSelectedVideoForCategory(null);
+          }}
+          onSelect={handleCategorySelect}
+          categories={categories}
+          currentCategory={selectedVideoForCategory?.category}
+        />
       </View>
     </SafeScreen>
   );
@@ -472,6 +878,7 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.xl,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+    marginBottom: 12,
   },
   tab: {
     flex: 1,
@@ -501,7 +908,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: theme.spacing.xl * 2,
+    paddingTop: theme.spacing.lg * 2,
   },
   emptyText: {
     color: theme.colors.text.secondary,
@@ -513,7 +920,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingTop: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl * 2,
+    paddingBottom: theme.spacing.lg * 2,
   },
   videoThumbnail: {
     width: VIDEO_WIDTH,
@@ -592,6 +999,7 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+    marginTop: 0,
   },
   scrollViewContent: {
     flexGrow: 1,
@@ -610,5 +1018,158 @@ const styles = StyleSheet.create({
   },
   statsIcon: {
     marginRight: 4,
+  },
+  categoryPillsWrapper: {
+    height: 36,
+    backgroundColor: theme.colors.background,
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  categoryPillsScroll: {
+    height: 36,
+  },
+  categoryPillsContainer: {
+    paddingHorizontal: theme.spacing.lg,
+    height: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  categoryPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 24,
+  },
+  selectedCategoryPill: {
+    backgroundColor: 'transparent',
+    borderColor: theme.colors.accent,
+  },
+  categoryPillText: {
+    color: theme.colors.text.secondary,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  selectedCategoryPillText: {
+    color: theme.colors.accent,
+  },
+  addCategoryPill: {
+    width: 32,
+    paddingHorizontal: 0,
+    backgroundColor: 'transparent',
+    borderColor: theme.colors.accent,
+    borderStyle: 'dashed',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  newCategoryModal: {
+    backgroundColor: theme.colors.background,
+    borderTopLeftRadius: theme.borderRadius.lg,
+    borderTopRightRadius: theme.borderRadius.lg,
+    padding: theme.spacing.lg,
+    width: '100%',
+    maxHeight: '50%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: theme.spacing.lg,
+  },
+  closeButton: {
+    padding: theme.spacing.xs,
+  },
+  newCategoryTitle: {
+    fontSize: theme.typography.sizes.lg,
+    fontWeight: theme.typography.weights.bold,
+    color: theme.colors.text.primary,
+  },
+  categorySelectionList: {
+    marginBottom: theme.spacing.lg,
+  },
+  categorySelectionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.xs,
+  },
+  selectedCategoryItem: {
+    backgroundColor: theme.colors.surface,
+  },
+  categorySelectionText: {
+    color: theme.colors.text.primary,
+    fontSize: theme.typography.sizes.md,
+    flex: 1,
+  },
+  selectedCategoryText: {
+    color: theme.colors.accent,
+    fontWeight: theme.typography.weights.bold,
+  },
+  newCategoryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: theme.spacing.md,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface,
+    gap: theme.spacing.sm,
+  },
+  newCategoryButtonText: {
+    color: theme.colors.accent,
+    fontSize: theme.typography.sizes.md,
+    fontWeight: theme.typography.weights.medium,
+  },
+  newCategoryInput: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.md,
+    color: theme.colors.text.primary,
+    fontSize: theme.typography.sizes.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginBottom: theme.spacing.lg,
+    height: 48,
+  },
+  newCategoryButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: theme.spacing.md,
+  },
+  cancelButton: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md,
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    flex: 1,
+  },
+  addButton: {
+    backgroundColor: theme.colors.accent,
+    borderRadius: theme.borderRadius.md,
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    flex: 1,
+  },
+  cancelButtonText: {
+    color: theme.colors.text.primary,
+    fontSize: theme.typography.sizes.md,
+    fontWeight: theme.typography.weights.medium,
+    textAlign: 'center',
+  },
+  addButtonText: {
+    color: theme.colors.text.primary,
+    fontSize: theme.typography.sizes.md,
+    fontWeight: theme.typography.weights.medium,
+    textAlign: 'center',
   },
 }); 
