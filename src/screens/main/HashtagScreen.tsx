@@ -26,7 +26,9 @@ export const HashtagScreen = () => {
             <Ionicons name="chevron-back" size={24} color={theme.colors.text.primary} />
           </TouchableOpacity>
           <View style={styles.hashtagContainer}>
-            <Text style={styles.hashtagText}>{tag}</Text>
+            <Text style={styles.hashtagText}>
+              {tag.startsWith('#') ? tag : `#${tag}`}
+            </Text>
           </View>
         </View>
         <VideoFeed hashtagFilter={tag} />

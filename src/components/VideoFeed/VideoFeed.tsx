@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, FlatList, Dimensions, ActivityIndicator, ViewToken, StyleSheet, Text, TouchableOpacity, Platform } from 'react-native';
+import { View, FlatList, Dimensions, ActivityIndicator, ViewToken, StyleSheet, Text, TouchableOpacity, Platform, Animated } from 'react-native';
 import { QueryDocumentSnapshot } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
@@ -31,6 +31,7 @@ export interface Video {
     height?: number;
     fps?: number;
     hashtags?: string[];
+    normalizedHashtags?: string[];
   };
 }
 
@@ -97,7 +98,9 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter }) => {
   }, [videos]);
 
   const handleHashtagPress = (hashtag: string) => {
-    navigation.navigate('Hashtag', { tag: hashtag.replace('#', '') });
+    // Ensure hashtag has '#' prefix
+    const formattedHashtag = hashtag.startsWith('#') ? hashtag : `#${hashtag}`;
+    navigation.navigate('Hashtag', { tag: formattedHashtag });
   };
 
   const renderHashtags = (hashtags?: string[]) => {
@@ -129,11 +132,12 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter }) => {
           <VideoPlayer
             video={item}
             isVisible={index === visibleVideoIndex && isFocused}
+            onHashtagPress={handleHashtagPress}
           />
         </View>
       </View>
     );
-  }, [visibleVideoIndex, isFocused, pageHeight]);
+  }, [visibleVideoIndex, isFocused, pageHeight, handleHashtagPress]);
 
   if (loading && videos.length === 0) {
     return (

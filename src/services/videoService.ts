@@ -22,6 +22,7 @@ import {
   deleteDoc,
   addDoc,
   where,
+  deleteField,
 } from 'firebase/firestore';
 import { Video } from '../components/VideoFeed/VideoFeed';
 import * as FileSystem from 'expo-file-system';
@@ -54,10 +55,14 @@ export const fetchVideosFromFirestore = async (
     let q = query(videosRef, orderBy('createdAt', 'desc'), limit(10));
 
     if (hashtagFilter) {
-      console.log('Applying hashtag filter:', hashtagFilter);
+      // Remove '#' if present for searching
+      const searchTag = hashtagFilter.replace('#', '');
+      console.log('Searching for hashtag:', searchTag);
+
+      // Search for the tag in any format
       q = query(
         videosRef,
-        where('metadata.hashtags', 'array-contains', hashtagFilter),
+        where('metadata.hashtags', 'array-contains-any', [searchTag, `#${searchTag}`]),
         orderBy('createdAt', 'desc'),
         limit(10),
       );
@@ -293,6 +298,58 @@ export const uploadVideo = async (uri: string, metadata: UploadVideoMetadata) =>
     };
   } catch (error) {
     console.error('Error uploading video:', error);
+    throw error;
+  }
+};
+
+export const migrateHashtagsToNormalized = async () => {
+  try {
+    console.log('Starting hashtag normalization migration...');
+    const videosRef = collection(db, 'videos');
+    const q = query(videosRef);
+    const querySnapshot = await getDocs(q);
+
+    const updates = querySnapshot.docs.map(async doc => {
+      const videoData = doc.data();
+      let hashtags: string[] = [];
+
+      // Collect hashtags from all possible locations
+      if (videoData.metadata?.hashtags) {
+        hashtags = [...hashtags, ...videoData.metadata.hashtags];
+      }
+      if (videoData.hashtags) {
+        hashtags = [...hashtags, ...videoData.hashtags];
+      }
+
+      if (hashtags.length > 0) {
+        // Remove duplicates and ensure proper formatting
+        const uniqueHashtags = Array.from(new Set(hashtags));
+        const formattedHashtags = uniqueHashtags.map(tag =>
+          tag.startsWith('#') ? tag : `#${tag}`,
+        );
+        const normalizedHashtags = formattedHashtags.map(tag => tag.replace('#', '').toLowerCase());
+
+        // Update document with consistent hashtag storage
+        await updateDoc(doc.ref, {
+          'metadata.hashtags': formattedHashtags,
+          'metadata.normalizedHashtags': normalizedHashtags,
+          // Remove old hashtags field if it exists
+          hashtags: deleteField(),
+        });
+
+        console.log('Updated hashtags for video:', {
+          id: doc.id,
+          original: hashtags,
+          formatted: formattedHashtags,
+          normalized: normalizedHashtags,
+        });
+      }
+    });
+
+    await Promise.all(updates);
+    console.log('Hashtag normalization migration complete');
+  } catch (error) {
+    console.error('Error migrating hashtags:', error);
     throw error;
   }
 };

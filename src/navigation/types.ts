@@ -16,6 +16,7 @@ export type MainStackParamList = {
   Hashtag: {
     tag: string;
   };
+  Profile: undefined;
 };
 
 export type RootStackParamList = {

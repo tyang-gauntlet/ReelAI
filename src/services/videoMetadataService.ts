@@ -7,6 +7,8 @@ export interface VideoMetadata {
   size?: number;
   contentType?: string;
   thumbnailTimestamps?: number[];
+  hashtags?: string[];
+  normalizedHashtags?: string[];
   aiTags?: {
     objects?: string[];
     actions?: string[];
@@ -74,6 +76,15 @@ export const updateVideoMetadata = async (
   metadata: Partial<VideoMetadata>,
 ) => {
   try {
+    // If hashtags are provided, create normalized version
+    if (metadata.hashtags) {
+      // Ensure hashtags have '#' prefix for display and store normalized version without '#'
+      metadata.hashtags = metadata.hashtags.map(tag => (tag.startsWith('#') ? tag : `#${tag}`));
+      metadata.normalizedHashtags = metadata.hashtags.map(tag =>
+        tag.replace('#', '').toLowerCase(),
+      );
+    }
+
     // Update Firestore document
     const videoRef = doc(db, 'videos', videoId);
     await updateDoc(videoRef, {
@@ -107,7 +118,9 @@ export const updateVideoMetadata = async (
 };
 
 // Function to extract metadata from video file
-export const extractVideoMetadata = async (storagePath: string): Promise<VideoMetadata> => {
+export const extractVideoMetadata = async (
+  storagePath: string,
+): Promise<Partial<VideoMetadata>> => {
   try {
     const storageRef = ref(storage, storagePath);
     const metadata = await getMetadata(storageRef);

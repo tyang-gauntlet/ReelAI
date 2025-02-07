@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, FlatList, Image, Dimensions, ActivityIndicator, Modal, PanResponder } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, FlatList, Image, Dimensions, ActivityIndicator, Modal, PanResponder, ScrollView } from 'react-native';
 import { SafeScreen } from '../../components/layout/SafeScreen';
 import { useAuth } from '../../hooks/useAuth';
 import { theme } from '../../styles/theme';
@@ -27,8 +27,8 @@ type ProfileScreenNavigationProp = CompositeNavigationProp<
 type TabType = 'liked' | 'saved';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const VIDEO_WIDTH = (SCREEN_WIDTH - theme.spacing.lg * 3) / 2;
-const VIDEO_HEIGHT = VIDEO_WIDTH * 1.5;
+const VIDEO_WIDTH = (SCREEN_WIDTH - theme.spacing.lg * 4) / 2;
+const VIDEO_HEIGHT = VIDEO_WIDTH * 1.3;
 
 const VideoItem = React.memo(({
   video,
@@ -64,13 +64,13 @@ const VideoItem = React.memo(({
               onError={() => onThumbnailError(video.id)}
             />
             <View style={styles.playIconOverlay}>
-              <Ionicons name="play-circle" size={40} color="white" />
+              <Ionicons name="play-circle" size={30} color="white" />
             </View>
           </View>
         ) : (
           <View style={[styles.thumbnailPlaceholder, { backgroundColor: theme.colors.surface }]}>
             <View style={styles.placeholderContent}>
-              <Ionicons name="videocam" size={40} color={theme.colors.text.secondary} />
+              <Ionicons name="videocam" size={30} color={theme.colors.text.secondary} />
               <View style={styles.placeholderTextContainer}>
                 <Text style={styles.placeholderTitle} numberOfLines={1}>
                   {video.title}
@@ -86,9 +86,12 @@ const VideoItem = React.memo(({
           <Text style={styles.videoTitle} numberOfLines={1}>
             {video.title}
           </Text>
-          <Text style={styles.videoStats}>
-            {video.likes} likes
-          </Text>
+          <View style={styles.statsRow}>
+            <Ionicons name="heart" size={12} color={theme.colors.like} style={styles.statsIcon} />
+            <Text style={styles.videoStats}>
+              {video.likes} likes
+            </Text>
+          </View>
         </View>
       </View>
     </TouchableOpacity>
@@ -109,6 +112,7 @@ export const ProfileScreen = () => {
   const [loadingThumbnails, setLoadingThumbnails] = useState<{ [key: string]: boolean }>({});
   const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
 
   const panResponder = React.useRef(
     PanResponder.create({
@@ -160,7 +164,7 @@ export const ProfileScreen = () => {
     };
 
     fetchVideos();
-  }, [user, activeTab, refreshTrigger, isFocused, initializeVideoState]);
+  }, [user, refreshTrigger, isFocused, initializeVideoState]);
 
   const loadThumbnail = async (video: Video) => {
     if (
@@ -187,7 +191,7 @@ export const ProfileScreen = () => {
   // Reset failed thumbnails when changing tabs or refreshing
   useEffect(() => {
     setFailedThumbnails(new Set());
-  }, [activeTab, refreshTrigger]);
+  }, [refreshTrigger]);
 
   const handleLogout = async () => {
     try {
@@ -195,26 +199,6 @@ export const ProfileScreen = () => {
     } catch (error) {
       console.error('Error logging out:', error);
       Alert.alert('Error', 'Failed to log out. Please try again.');
-    }
-  };
-
-  const handleGenerateThumbnails = async () => {
-    try {
-      setLoading(true);
-      await generateThumbnailsForExistingVideos();
-      // Refresh the videos to show new thumbnails
-      if (activeTab === 'liked') {
-        const videos = await getLikedVideos(user!.uid);
-        setLikedVideos(videos);
-      } else {
-        const videos = await getSavedVideos(user!.uid);
-        setSavedVideos(videos);
-      }
-    } catch (error) {
-      console.error('Error generating thumbnails:', error);
-      Alert.alert('Error', 'Failed to generate thumbnails');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -280,6 +264,24 @@ export const ProfileScreen = () => {
     });
   };
 
+  const handleTabPress = (tab: TabType) => {
+    setActiveTab(tab);
+    // Scroll to the appropriate page when tab is pressed
+    scrollViewRef.current?.scrollTo({
+      x: tab === 'liked' ? 0 : SCREEN_WIDTH,
+      animated: true
+    });
+  };
+
+  const handleScroll = (event: any) => {
+    const offsetX = event.nativeEvent.contentOffset.x;
+    if (offsetX >= SCREEN_WIDTH / 2 && activeTab !== 'saved') {
+      setActiveTab('saved');
+    } else if (offsetX < SCREEN_WIDTH / 2 && activeTab !== 'liked') {
+      setActiveTab('liked');
+    }
+  };
+
   const renderVideoItem = ({ item: video }: { item: Video }) => {
     const state = getVideoState(video.id);
     const updatedVideo = {
@@ -299,17 +301,8 @@ export const ProfileScreen = () => {
     );
   };
 
-  const renderContent = () => {
-    if (loading) {
-      return (
-        <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color={theme.colors.accent} />
-        </View>
-      );
-    }
-
-    // Filter videos based on current video states
-    const videos = activeTab === 'liked'
+  const renderTabContent = (tabType: TabType) => {
+    const videos = tabType === 'liked'
       ? likedVideos.filter(v => getVideoState(v.id).isLiked)
       : savedVideos.filter(v => getVideoState(v.id).isSaved);
 
@@ -317,7 +310,7 @@ export const ProfileScreen = () => {
       return (
         <View style={styles.centerContent}>
           <Text style={styles.emptyText}>
-            No {activeTab} videos yet
+            No {tabType} videos yet
           </Text>
         </View>
       );
@@ -339,6 +332,18 @@ export const ProfileScreen = () => {
     );
   };
 
+  if (loading) {
+    return (
+      <SafeScreen backgroundColor={theme.colors.background}>
+        <View style={styles.container}>
+          <View style={styles.centerContent}>
+            <ActivityIndicator size="large" color={theme.colors.accent} />
+          </View>
+        </View>
+      </SafeScreen>
+    );
+  }
+
   return (
     <SafeScreen backgroundColor={theme.colors.background}>
       <View style={styles.container}>
@@ -348,15 +353,6 @@ export const ProfileScreen = () => {
         >
           <Ionicons name="log-out-outline" size={24} color={theme.colors.error} />
         </TouchableOpacity>
-
-        {__DEV__ && (
-          <TouchableOpacity
-            style={styles.generateButton}
-            onPress={handleGenerateThumbnails}
-          >
-            <Ionicons name="refresh" size={24} color={theme.colors.accent} />
-          </TouchableOpacity>
-        )}
 
         <View style={styles.profileContent}>
           <View style={styles.avatarContainer}>
@@ -368,7 +364,7 @@ export const ProfileScreen = () => {
         <View style={styles.tabsContainer}>
           <TouchableOpacity
             style={[styles.tab, activeTab === 'liked' && styles.activeTab]}
-            onPress={() => setActiveTab('liked')}
+            onPress={() => handleTabPress('liked')}
           >
             <Ionicons
               name="heart"
@@ -383,7 +379,7 @@ export const ProfileScreen = () => {
 
           <TouchableOpacity
             style={[styles.tab, activeTab === 'saved' && styles.activeTab]}
-            onPress={() => setActiveTab('saved')}
+            onPress={() => handleTabPress('saved')}
           >
             <Ionicons
               name="bookmark"
@@ -397,9 +393,23 @@ export const ProfileScreen = () => {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.contentContainer}>
-          {renderContent()}
-        </View>
+        <ScrollView
+          ref={scrollViewRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={handleScroll}
+          scrollEventThrottle={16}
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollViewContent}
+        >
+          <View style={styles.page}>
+            {renderTabContent('liked')}
+          </View>
+          <View style={styles.page}>
+            {renderTabContent('saved')}
+          </View>
+        </ScrollView>
 
         <Modal
           visible={selectedVideo !== null}
@@ -499,6 +509,7 @@ const styles = StyleSheet.create({
   },
   columnWrapper: {
     justifyContent: 'space-between',
+    paddingHorizontal: theme.spacing.sm,
   },
   listContent: {
     paddingTop: theme.spacing.lg,
@@ -509,6 +520,9 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.lg,
   },
   thumbnailContainer: {
+    position: 'relative',
+    width: VIDEO_WIDTH,
+    height: VIDEO_HEIGHT,
     borderRadius: theme.borderRadius.md,
     overflow: 'hidden',
     backgroundColor: theme.colors.surface,
@@ -516,7 +530,7 @@ const styles = StyleSheet.create({
   thumbnail: {
     width: VIDEO_WIDTH,
     height: VIDEO_HEIGHT,
-    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md,
   },
   thumbnailPlaceholder: {
     width: VIDEO_WIDTH,
@@ -547,36 +561,54 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   videoInfo: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     padding: theme.spacing.sm,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderBottomLeftRadius: theme.borderRadius.md,
+    borderBottomRightRadius: theme.borderRadius.md,
   },
   videoTitle: {
     color: theme.colors.text.primary,
-    fontSize: theme.typography.sizes.sm,
-    fontWeight: theme.typography.weights.medium,
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
   },
   videoStats: {
     color: theme.colors.text.secondary,
-    fontSize: theme.typography.sizes.xs,
-    marginTop: theme.spacing.xs,
+    fontSize: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   playIconOverlay: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
+    top: '50%',
+    left: '50%',
+    transform: [{ translateX: -15 }, { translateY: -15 }],
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    borderRadius: 15,
   },
-  generateButton: {
-    position: 'absolute',
-    top: theme.spacing.lg,
-    right: theme.spacing.lg * 3,
-    zIndex: 1,
-    padding: theme.spacing.sm,
+  scrollView: {
+    flex: 1,
+  },
+  scrollViewContent: {
+    flexGrow: 1,
+  },
+  page: {
+    width: SCREEN_WIDTH - theme.spacing.lg * 2,
+    flex: 1,
   },
   modalContainer: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statsIcon: {
+    marginRight: 4,
   },
 }); 

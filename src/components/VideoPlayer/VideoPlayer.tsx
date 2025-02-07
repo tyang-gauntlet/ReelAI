@@ -34,9 +34,10 @@ interface VideoPlayerProps {
   };
   isVisible: boolean;
   onVideoUpdate?: (videoId: string, updates: { liked?: boolean; saved?: boolean }) => void;
+  onHashtagPress?: (hashtag: string) => void;
 }
 
-const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpdate }) => {
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpdate, onHashtagPress }) => {
   const { user } = useAuth();
   const { triggerRefresh } = useVideoList();
   const { getVideoState, updateVideoState } = useVideoState();
@@ -576,22 +577,30 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
             </View>
 
             <View style={styles.bottomInfo}>
-              <Text style={styles.title}>{video.title}</Text>
               <TouchableOpacity onPress={handleDescriptionPress} activeOpacity={0.7}>
-                <Text style={styles.description} numberOfLines={isDescriptionExpanded ? undefined : 1}>
-                  {video.description}
+                <Text style={styles.title} numberOfLines={isDescriptionExpanded ? undefined : 1}>
+                  {video.title}
                 </Text>
-                {video.metadata?.hashtags && video.metadata.hashtags.length > 0 && (
-                  <Text style={styles.hashtags} numberOfLines={isDescriptionExpanded ? undefined : 1}>
-                    {video.metadata.hashtags.map((tag, index) => (
-                      <Text
-                        key={index}
-                        onPress={() => navigation.navigate('Hashtag', { tag })}
-                        style={styles.hashtag}
-                      >
-                        #{tag}{' '}
-                      </Text>
-                    ))}
+                {video.description && (
+                  <Text style={styles.description} numberOfLines={isDescriptionExpanded ? undefined : 1}>
+                    {video.description}
+                  </Text>
+                )}
+                {isDescriptionExpanded && video.metadata?.hashtags && video.metadata.hashtags.length > 0 && (
+                  <Text style={styles.hashtags}>
+                    {video.metadata.hashtags.map((tag, index) => {
+                      // Ensure hashtag has '#' prefix for display
+                      const formattedTag = tag.startsWith('#') ? tag : `#${tag}`;
+                      return (
+                        <Text
+                          key={index}
+                          onPress={() => onHashtagPress?.(formattedTag)}
+                          style={styles.hashtag}
+                        >
+                          {formattedTag}{' '}
+                        </Text>
+                      );
+                    })}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -611,85 +620,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
           )}
         </View>
       </TouchableOpacity>
-
-      {/* Expanded dock */}
-      {isExpanded && (
-        <Animated.View
-          style={{
-            position: 'absolute',
-            bottom: 50, // Move popup higher
-            flexDirection: 'row',
-            backgroundColor: 'rgba(28, 28, 30, 0.92)',
-            borderRadius: 20,
-            padding: 8,
-            paddingHorizontal: 10,
-            transform: [{
-              translateY: expandAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [15, 0],
-              })
-            }],
-            opacity: expandAnim,
-            shadowColor: '#000',
-            shadowOffset: {
-              width: 0,
-              height: 4,
-            },
-            shadowOpacity: 0.25,
-            shadowRadius: 10,
-            elevation: 8,
-          }}
-        >
-          {routes.map((route, index) => {
-            const isActive = state.index === index;
-            const baseScale = scaleAnims[index].interpolate({
-              inputRange: [0, 1],
-              outputRange: [0.8, 1], // Start from larger initial scale
-            });
-
-            const hoverScale = Animated.multiply(
-              activeIndexAnim.interpolate({
-                inputRange: [index - 1, index, index + 1],
-                outputRange: [1, ACTIVE_SCALE, 1],
-                extrapolate: 'clamp',
-              }),
-              expandAnim
-            );
-
-            const finalScale = Animated.multiply(baseScale, hoverScale);
-
-            return (
-              <Animated.View
-                key={route.name}
-                style={{
-                  marginHorizontal: SPACING / 2,
-                  transform: [
-                    { scale: finalScale }
-                  ],
-                }}
-              >
-                <View
-                  style={{
-                    width: EXPANDED_SIZE,
-                    height: EXPANDED_SIZE,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Ionicons
-                    name={(route.icon + (isActive ? '' : '-outline')) as keyof typeof Ionicons.glyphMap}
-                    size={32} // Larger icon size
-                    color="#fff"
-                    style={{
-                      opacity: isActive ? 1 : 0.8,
-                    }}
-                  />
-                </View>
-              </Animated.View>
-            );
-          })}
-        </Animated.View>
-      )}
     </View>
   );
 };
