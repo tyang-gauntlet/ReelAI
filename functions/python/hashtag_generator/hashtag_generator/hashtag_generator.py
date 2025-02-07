@@ -7,17 +7,15 @@ import logging
 from typing import List, Dict, Any
 import tempfile
 from openai import OpenAI
-from .config import firebase_config
+from datetime import datetime
 import firebase_admin
 from firebase_admin import storage, firestore
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import json
+from .config import firebase_config
 
 logger = logging.getLogger(__name__)
-
-# Storage bucket name
-BUCKET_NAME = "reelai-c82fc.firebasestorage.app"
 
 # Constants for optimization
 MAX_IMAGE_SIZE = 384  # Reduced from 512 to save memory
@@ -50,14 +48,18 @@ def process_single_video(video_data: Dict[str, Any]) -> Dict[str, Any]:
         }
 
 
-def get_videos_without_hashtags() -> List[Dict[str, Any]]:
-    """Get list of videos that don't have hashtags yet and sync storage with Firestore."""
+def get_videos_without_content(force: bool = False) -> List[Dict[str, Any]]:
+    """Get list of videos that need content generation.
+
+    Args:
+        force: If True, return all videos regardless of existing content
+    """
     try:
         # Initialize Firebase if not already initialized
         if not firebase_admin._apps:
             firebase_config.initialize()
 
-        storage_client = storage.bucket(BUCKET_NAME)
+        storage_client = storage.bucket()
         db = firestore.client()
 
         # List all files in storage root
@@ -65,7 +67,7 @@ def get_videos_without_hashtags() -> List[Dict[str, Any]]:
         blobs = list(storage_client.list_blobs())
         logger.info(f"Found {len(blobs)} total blobs in storage")
 
-        videos_without_hashtags = []
+        videos_needing_content = []
         videos_collection = db.collection('videos')
 
         for blob in blobs:
@@ -91,29 +93,48 @@ def get_videos_without_hashtags() -> List[Dict[str, Any]]:
                     'id': video_id,
                     'storagePath': blob.name,
                     'createdAt': firestore.SERVER_TIMESTAMP,
-                    'hasHashtags': False
+                    'hasContent': False
                 })
                 logger.info(f"Created new video document for: {video_id}")
                 video_doc = video_ref.get()  # Refresh document
 
             video_data = video_doc.to_dict()
 
-            # Check if video needs hashtags
-            if not video_data.get('hasHashtags', False):
-                logger.info(f"No hashtags found for video: {video_id}")
-                videos_without_hashtags.append({
+            # If force is True, add all videos
+            if force:
+                logger.info(
+                    f"Force adding video for content generation: {video_id}")
+                videos_needing_content.append({
+                    'id': video_id,
+                    'storagePath': blob.name
+                })
+                continue
+
+            # Check if video needs content generation
+            title = video_data.get('title', '')
+            description = video_data.get('description', '')
+            has_meaningful_content = (
+                title and description and
+                not title.startswith('HD Video') and
+                not description.startswith('Beautiful HD video')
+            )
+
+            if not has_meaningful_content:
+                logger.info(
+                    f"No meaningful content found for video: {video_id}")
+                videos_needing_content.append({
                     'id': video_id,
                     'storagePath': blob.name
                 })
             else:
-                logger.info(f"Hashtags already exist for video: {video_id}")
+                logger.info(f"Content already exists for video: {video_id}")
 
         logger.info(
-            f"Found {len(videos_without_hashtags)} videos without hashtags")
-        return videos_without_hashtags
+            f"Found {len(videos_needing_content)} videos needing content")
+        return videos_needing_content
 
     except Exception as e:
-        logger.error(f"Error getting videos without hashtags: {str(e)}")
+        logger.error(f"Error getting videos without content: {str(e)}")
         return []
 
 
@@ -121,7 +142,7 @@ class HashtagGenerator:
     def __init__(self, video_id: str, video_data: Dict[str, Any]):
         self.video_id = video_id
         self.video_data = video_data
-        self.storage_client = storage.bucket(BUCKET_NAME)
+        self.storage_client = storage.bucket()
         self.openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         self.db = firestore.client()
 
@@ -191,17 +212,21 @@ class HashtagGenerator:
         try:
             messages = [
                 {
+                    "role": "system",
+                    "content": "You are a creative content writer specializing in video descriptions. Generate engaging, accurate titles and descriptions for videos. Always respond in JSON format with 'title' and 'description' fields."
+                },
+                {
                     "role": "user",
                     "content": [
                         {
                             "type": "text",
-                            "text": "Analyze this video frame and provide a concise, engaging title and description. Format your response as JSON with 'title' and 'description' fields. The title should be catchy but accurate (max 50 chars). The description should be informative and engaging (max 150 chars)."
+                            "text": "Create a title and description for this video frame. The title should be catchy, descriptive, and under 50 characters. The description should be engaging, informative, and under 150 characters. Focus on what makes the video unique and interesting."
                         },
                         {
                             "type": "image_url",
                             "image_url": {
                                 "url": frame_urls[0],
-                                "detail": "low"
+                                "detail": "high"
                             }
                         }
                     ]
@@ -209,18 +234,40 @@ class HashtagGenerator:
             ]
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4-turbo",  # DO NOT CHANGE THIS MODEL
+                model="gpt-4o-mini",  # DO NOT CHANGE THIS MODEL
                 messages=messages,
-                max_tokens=100,
+                max_tokens=300,
                 temperature=0.7,
                 response_format={"type": "json_object"}
             )
 
-            content = json.loads(response.choices[0].message.content)
-            return {
-                'title': content['title'][:50],
-                'description': content['description'][:150]
-            }
+            try:
+                content = json.loads(response.choices[0].message.content)
+                logger.info(f"Raw OpenAI response: {content}")
+
+                if not isinstance(content, dict) or 'title' not in content or 'description' not in content:
+                    raise ValueError("Invalid response format from OpenAI")
+
+                title = content['title'].strip()
+                description = content['description'].strip()
+
+                if not title or not description:
+                    raise ValueError("Empty title or description from OpenAI")
+
+                return {
+                    'title': title[:50],
+                    'description': description[:150]
+                }
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse OpenAI response: {str(e)}")
+                raise
+            except KeyError as e:
+                logger.error(
+                    f"Missing required field in OpenAI response: {str(e)}")
+                raise
+            except ValueError as e:
+                logger.error(f"Validation error in OpenAI response: {str(e)}")
+                raise
 
         except Exception as e:
             logger.error(f"Error generating content description: {str(e)}")
@@ -234,6 +281,10 @@ class HashtagGenerator:
         try:
             messages = [
                 {
+                    "role": "system",
+                    "content": "You are a social media expert specializing in hashtag generation. Create relevant, trending hashtags for video content."
+                },
+                {
                     "role": "user",
                     "content": [
                         {
@@ -244,7 +295,7 @@ class HashtagGenerator:
                             "type": "image_url",
                             "image_url": {
                                 "url": frame_urls[0],
-                                "detail": "low"
+                                "detail": "high"
                             }
                         }
                     ]
@@ -252,9 +303,9 @@ class HashtagGenerator:
             ]
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4-turbo",  # DO NOT CHANGE THIS MODEL
+                model="gpt-4o-mini",  # DO NOT CHANGE THIS MODEL
                 messages=messages,
-                max_tokens=50,
+                max_tokens=100,
                 temperature=0.7
             )
 
@@ -284,8 +335,10 @@ class HashtagGenerator:
         video_ref.update({
             'title': content.get('title', 'Untitled Video'),
             'description': content.get('description', ''),
-            'hashtags': content.get('hashtags', []),
-            'hasHashtags': True,
+            'metadata': {
+                'hashtags': content.get('hashtags', [])
+            },
+            'hasContent': True,
             'updatedAt': firestore.SERVER_TIMESTAMP
         })
         logger.info(f"Saved content for video {self.video_id} to Firestore")
@@ -304,14 +357,16 @@ class HashtagGenerator:
 
             # Generate content description
             content = self._generate_content_description(frame_urls)
+            logger.info(f"Generated content: {content}")
 
             # Generate hashtags
             hashtags = self._generate_hashtags(frame_urls)
+            logger.info(f"Generated hashtags: {hashtags}")
 
             # Combine all content
             result = {
-                'title': content['title'],
-                'description': content['description'],
+                'title': content.get('title', 'Untitled Video'),
+                'description': content.get('description', 'No description available'),
                 'hashtags': hashtags
             }
 
@@ -321,7 +376,11 @@ class HashtagGenerator:
             return {
                 "success": True,
                 "videoId": self.video_id,
-                **result
+                "title": result['title'],
+                "description": result['description'],
+                "metadata": {
+                    "hashtags": hashtags
+                }
             }
 
         except Exception as e:
@@ -337,14 +396,18 @@ class HashtagGenerator:
             }
 
 
-def process_all_videos() -> Dict[str, Any]:
-    """Process all videos that don't have hashtags."""
+def process_all_videos(force: bool = False) -> Dict[str, Any]:
+    """Process all videos that need content generation.
+
+    Args:
+        force: If True, process all videos regardless of existing content
+    """
     try:
-        videos = get_videos_without_hashtags()
+        videos = get_videos_without_content(force)
         if not videos:
             return {
                 "success": True,
-                "message": "No videos found without hashtags",
+                "message": "No videos found needing content generation",
                 "processed": 0,
                 "total": 0
             }
@@ -367,7 +430,7 @@ def process_all_videos() -> Dict[str, Any]:
 
         return {
             "success": True,
-            "message": f"Processed {successful} out of {len(results)} videos",
+            "message": f"Generated content for {successful} out of {len(results)} videos",
             "processed": successful,
             "total": len(results),
             "results": results

@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth';
 import { View, ActivityIndicator, Platform, Pressable, Animated, PanResponder, Dimensions } from 'react-native';
 import { HomeScreen } from '../screens/HomeScreen';
 import { ProfileScreen } from '../screens/main/ProfileScreen';
+import { HashtagScreen } from '../screens/main/HashtagScreen';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../styles/theme';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
@@ -14,6 +15,8 @@ import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 export type RootStackParamList = {
   Auth: undefined;
   MainTabs: undefined;
+  Hashtag: undefined;
+  Tabs: undefined;
 };
 
 export type MainTabParamList = {
@@ -30,7 +33,7 @@ type RouteConfig = {
 };
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
-const DOT_SIZE = 4;
+const DOT_SIZE = 12;
 const EXPANDED_SIZE = 44;
 const SPACING = 16;
 const ACTIVE_SCALE = 1.4;
@@ -148,113 +151,174 @@ const CustomTabBar: React.FC<BottomTabBarProps> = ({ state, navigation }) => {
         right: 0,
         alignItems: 'center',
       }}
-      {...panResponder.panHandlers}
     >
-      {/* Collapsed dots */}
-      <View style={{
-        flexDirection: 'row',
-        opacity: isExpanded ? 0 : 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.35)',
-        padding: 6,
-        borderRadius: 10,
-      }}>
-        {routes.map((route, index) => (
-          <View
-            key={route.name}
-            style={{
-              width: DOT_SIZE,
-              height: DOT_SIZE,
-              borderRadius: DOT_SIZE / 2,
-              backgroundColor: state.index === index ? '#fff' : 'rgba(255, 255, 255, 0.4)',
-              marginHorizontal: SPACING / 4,
-            }}
-          />
-        ))}
-      </View>
-
-      {/* Expanded dock */}
       {isExpanded && (
-        <Animated.View
+        <Pressable
           style={{
             position: 'absolute',
-            bottom: 35,
-            flexDirection: 'row',
-            backgroundColor: 'rgba(28, 28, 30, 0.92)',
-            borderRadius: 20,
-            padding: 8,
-            paddingHorizontal: 10,
-            transform: [{
-              translateY: expandAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [15, 0],
-              })
-            }],
-            opacity: expandAnim,
-            shadowColor: '#000',
-            shadowOffset: {
-              width: 0,
-              height: 4,
-            },
-            shadowOpacity: 0.25,
-            shadowRadius: 10,
-            elevation: 8,
+            top: -1000,
+            left: -1000,
+            right: -1000,
+            bottom: -1000,
+            backgroundColor: 'transparent',
           }}
-        >
-          {routes.map((route, index) => {
-            const isActive = state.index === index;
-            const baseScale = scaleAnims[index].interpolate({
-              inputRange: [0, 1],
-              outputRange: [0.7, 1],
-            });
+          onPress={collapseMenu}
+        />
+      )}
 
-            const hoverScale = Animated.multiply(
-              activeIndexAnim.interpolate({
-                inputRange: [index - 1, index, index + 1],
-                outputRange: [1, ACTIVE_SCALE, 1],
-                extrapolate: 'clamp',
-              }),
-              expandAnim
-            );
-
-            const finalScale = Animated.multiply(baseScale, hoverScale);
-
-            return (
-              <Animated.View
-                key={route.name}
+      <View {...panResponder.panHandlers}>
+        {/* Collapsed dots */}
+        <View style={{
+          flexDirection: 'row',
+          opacity: isExpanded ? 0 : 1,
+          backgroundColor: 'rgba(0, 0, 0, 0.35)',
+          padding: 6,
+          borderRadius: 10,
+        }}>
+          {routes.map((route, index) => (
+            <Pressable
+              key={route.name}
+              onPress={expandMenu}
+              delayLongPress={150}
+              onLongPress={expandMenu}
+              style={{
+                width: DOT_SIZE + 8,
+                height: DOT_SIZE + 8,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <View
                 style={{
-                  marginHorizontal: SPACING / 2,
-                  transform: [
-                    { scale: finalScale }
-                  ],
+                  width: DOT_SIZE,
+                  height: DOT_SIZE,
+                  borderRadius: DOT_SIZE / 2,
+                  backgroundColor: state.index === index ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
               >
-                <View
-                  style={{
-                    width: EXPANDED_SIZE,
-                    height: EXPANDED_SIZE,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Ionicons
-                    name={(route.icon + (isActive ? '' : '-outline')) as keyof typeof Ionicons.glyphMap}
-                    size={28}
-                    color="#fff"
+                <Ionicons
+                  name={route.icon}
+                  size={DOT_SIZE - 2}
+                  color={state.index === index ? '#fff' : 'rgba(255, 255, 255, 0.4)'}
+                />
+              </View>
+            </Pressable>
+          ))}
+        </View>
+
+        {/* Expanded dock */}
+        {isExpanded && (
+          <Animated.View
+            style={{
+              position: 'absolute',
+              bottom: 35,
+              left: 0,
+              right: 0,
+              alignItems: 'center',
+            }}
+          >
+            <Animated.View
+              style={{
+                flexDirection: 'row',
+                backgroundColor: 'rgba(28, 28, 30, 0.92)',
+                borderRadius: 20,
+                padding: 8,
+                paddingHorizontal: 10,
+                transform: [{
+                  translateY: expandAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [15, 0],
+                  })
+                }],
+                opacity: expandAnim,
+                shadowColor: '#000',
+                shadowOffset: {
+                  width: 0,
+                  height: 4,
+                },
+                shadowOpacity: 0.25,
+                shadowRadius: 10,
+                elevation: 8,
+              }}
+            >
+              {routes.map((route, index) => {
+                const isActive = state.index === index;
+                const baseScale = scaleAnims[index].interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.7, 1],
+                });
+
+                const hoverScale = Animated.multiply(
+                  activeIndexAnim.interpolate({
+                    inputRange: [index - 1, index, index + 1],
+                    outputRange: [1, ACTIVE_SCALE, 1],
+                    extrapolate: 'clamp',
+                  }),
+                  expandAnim
+                );
+
+                const finalScale = Animated.multiply(baseScale, hoverScale);
+
+                return (
+                  <Animated.View
+                    key={route.name}
                     style={{
-                      opacity: isActive ? 1 : 0.8,
+                      marginHorizontal: SPACING / 2,
+                      transform: [
+                        { scale: finalScale }
+                      ],
                     }}
-                  />
-                </View>
-              </Animated.View>
-            );
-          })}
-        </Animated.View>
-      )}
+                  >
+                    <Pressable
+                      onPress={() => {
+                        if (state.index !== index) {
+                          navigation.navigate(route.name);
+                        }
+                        collapseMenu();
+                      }}
+                      style={{
+                        width: EXPANDED_SIZE,
+                        height: EXPANDED_SIZE,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Ionicons
+                        name={(route.icon + (isActive ? '' : '-outline')) as keyof typeof Ionicons.glyphMap}
+                        size={28}
+                        color="#fff"
+                        style={{
+                          opacity: isActive ? 1 : 0.8,
+                        }}
+                      />
+                    </Pressable>
+                  </Animated.View>
+                );
+              })}
+            </Animated.View>
+          </Animated.View>
+        )}
+      </View>
     </View>
   );
 };
 
 const MainTabs = () => {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      <Stack.Screen name="Tabs" component={TabNavigator} />
+      <Stack.Screen name="Hashtag" component={HashtagScreen} />
+    </Stack.Navigator>
+  );
+};
+
+const TabNavigator = () => {
   return (
     <Tab.Navigator
       tabBar={props => <CustomTabBar {...props} />}

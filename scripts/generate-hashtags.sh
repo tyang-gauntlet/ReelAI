@@ -11,27 +11,35 @@ FUNCTION_URL="https://us-central1-reelai-c82fc.cloudfunctions.net/generate-video
 # Function to show usage
 show_usage() {
     echo -e "${YELLOW}Usage:${NC}"
-    echo "  ./generate-hashtags.sh [command]"
+    echo "  ./generate-hashtags.sh <command> [options]"
     echo ""
-    echo -e "${YELLOW}Commands:${NC}"
-    echo "  all         Process all videos without hashtags"
-    echo "  single      Process a single video (requires --path)"
+    echo "Commands:"
+    echo "  all                Process all videos"
+    echo "  single            Process a single video"
     echo ""
-    echo -e "${YELLOW}Options:${NC}"
-    echo "  --path      Video path in storage (required for single mode)"
+    echo "Options:"
+    echo "  --path           Video path (required for single mode)"
+    echo "  --force          Force regenerate content for all videos"
     echo ""
-    echo -e "${YELLOW}Examples:${NC}"
-    echo "  ./generate-hashtags.sh all"
-    echo "  ./generate-hashtags.sh single --path example.mp4"
+    echo "Examples:"
+    echo "  ./generate-hashtags.sh all                     # Process all videos"
+    echo "  ./generate-hashtags.sh all --force            # Force regenerate all videos"
+    echo "  ./generate-hashtags.sh single --path video.mp4 # Process single video"
 }
 
 # Function to process all videos
 process_all() {
-    echo -e "${YELLOW}🎬 Processing all videos without hashtags...${NC}"
-    response=$(curl -s -X POST \
-        -H "Content-Type: application/json" \
-        -d "{}" \
-        $FUNCTION_URL)
+    local force=$1
+    local endpoint_url="$FUNCTION_URL"
+    
+    if [ "$force" = true ]; then
+        endpoint_url="${endpoint_url}?force=true"
+        echo -e "${YELLOW}🎬 Force processing all videos...${NC}"
+    else
+        echo -e "${YELLOW}🎬 Processing all videos without hashtags...${NC}"
+    fi
+    
+    response=$(curl -s -X POST "$endpoint_url")
     
     # Check if response is empty
     if [ -z "$response" ]; then
@@ -47,14 +55,10 @@ process_all() {
         echo -e "${RED}❌ Error processing videos${NC}"
         exit 1
     else
-        # Extract processed and total counts from response
-        processed=$(echo $response | python3 -c "import sys, json; data = json.load(sys.stdin); print(data.get('processed', 0))")
-        total=$(echo $response | python3 -c "import sys, json; data = json.load(sys.stdin); print(data.get('total', 0))")
-        
-        if [ "$total" -eq 0 ]; then
-            echo -e "${GREEN}✅ No videos found without hashtags${NC}"
+        if [ "$force" = true ]; then
+            echo -e "${GREEN}✅ Force processed all videos${NC}"
         else
-            echo -e "${GREEN}✅ Successfully processed $processed out of $total videos${NC}"
+            echo -e "${GREEN}✅ No videos found without hashtags${NC}"
         fi
     fi
 }
@@ -88,7 +92,7 @@ process_single() {
         echo -e "${RED}❌ Error generating hashtags${NC}"
         exit 1
     else
-        echo -e "${GREEN}✅ Hashtag generation complete!${NC}"
+        echo -e "${GREEN}✅ Content generation complete!${NC}"
     fi
 }
 
@@ -98,7 +102,21 @@ shift
 
 case $COMMAND in
     "all")
-        process_all
+        FORCE=false
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --force)
+                    FORCE=true
+                    shift
+                    ;;
+                *)
+                    echo -e "${RED}❌ Unknown option: $1${NC}"
+                    show_usage
+                    exit 1
+                    ;;
+            esac
+        done
+        process_all $FORCE
         ;;
     "single")
         VIDEO_PATH=""

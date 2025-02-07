@@ -44,58 +44,53 @@ interface FetchVideosResult {
 }
 
 export const fetchVideosFromFirestore = async (
-  lastDoc?: QueryDocumentSnapshot,
-): Promise<FetchVideosResult> => {
+  lastDocument?: QueryDocumentSnapshot,
+  hashtagFilter?: string,
+) => {
   try {
-    const videosCollection = collection(db, 'videos');
-    let videosQuery = query(videosCollection, orderBy('createdAt', 'desc'), limit(5));
+    console.log('Fetching videos with params:', { hashtagFilter, hasLastDoc: !!lastDocument });
 
-    if (lastDoc) {
-      videosQuery = query(
-        videosCollection,
+    const videosRef = collection(db, 'videos');
+    let q = query(videosRef, orderBy('createdAt', 'desc'), limit(10));
+
+    if (hashtagFilter) {
+      console.log('Applying hashtag filter:', hashtagFilter);
+      q = query(
+        videosRef,
+        where('metadata.hashtags', 'array-contains', hashtagFilter),
         orderBy('createdAt', 'desc'),
-        startAfter(lastDoc),
-        limit(5),
+        limit(10),
       );
     }
 
-    const querySnapshot = await getDocs(videosQuery);
-    const lastVisible = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
+    if (lastDocument) {
+      q = query(q, startAfter(lastDocument));
+    }
 
-    const videos = querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        title: data.title || '',
-        description: data.description,
-        videoUrl: data.videoUrl,
-        storageUrl: data.storageUrl,
-        thumbnailUrl: data.thumbnailUrl || data.storageUrl, // Use storageUrl as fallback
-        storagePath: data.storagePath,
-        likes: data.likes || 0,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        userId: data.userId || '',
-        metadata: data.metadata,
-      } as Video;
-    });
+    const querySnapshot = await getDocs(q);
+    const videos = querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    })) as Video[];
 
-    console.log('Fetched videos:', {
-      total: videos.length,
-      videos: videos.map(v => ({
-        id: v.id,
-        storageUrl: v.storageUrl,
-        thumbnailUrl: v.thumbnailUrl,
-      })),
+    console.log('Firestore query results:', {
+      totalVideos: videos.length,
+      videosWithHashtags: videos.filter(v => v.metadata?.hashtags?.length).length,
+      allHashtags: videos.map(v => v.metadata?.hashtags).filter(Boolean),
     });
 
     return {
       videos,
-      lastDoc: lastVisible,
-      hasMore: videos.length === 5,
+      lastDoc: querySnapshot.docs[querySnapshot.docs.length - 1] || null,
+      hasMore: querySnapshot.docs.length === 10,
     };
   } catch (error) {
     console.error('Error fetching videos:', error);
-    throw error;
+    return {
+      videos: [],
+      lastDoc: null,
+      hasMore: false,
+    };
   }
 };
 

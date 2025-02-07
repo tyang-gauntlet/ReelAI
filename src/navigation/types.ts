@@ -7,24 +7,19 @@ export type AuthStackParamList = {
 };
 
 export type TabStackParamList = {
-  Feed:
-    | {
-        initialVideo?: Video;
-        showPlayer?: boolean;
-      }
-    | undefined;
+  Home: undefined;
   Profile: undefined;
-  Settings: undefined;
 };
 
 export type MainStackParamList = {
-  Feed: undefined;
-  Profile: undefined;
-  Settings: undefined;
+  Tabs: NavigatorScreenParams<TabStackParamList>;
+  Hashtag: {
+    tag: string;
+  };
 };
 
 export type RootStackParamList = {
   Loading: undefined;
   Auth: NavigatorScreenParams<AuthStackParamList>;
-  Main: NavigatorScreenParams<MainStackParamList>;
+  MainTabs: NavigatorScreenParams<MainStackParamList>;
 };

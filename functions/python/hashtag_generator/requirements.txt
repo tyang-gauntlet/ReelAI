@@ -1,0 +1,10 @@
+functions-framework==3.*
+firebase-admin==6.*
+opencv-python-headless==4.*
+numpy==1.*
+openai==1.*
+Pillow==10.*
+google-cloud-storage==2.*
+python-dotenv==1.*
+Flask==3.*
+gunicorn==21.* 

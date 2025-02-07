@@ -14,6 +14,9 @@ import { saveVideo, checkIfSaved, unsaveVideo } from '../../services/saveVideoSe
 import { likeVideo, unlikeVideo, checkIfLiked } from '../../services/interactionService';
 import { useVideoList } from '../../contexts/VideoListContext';
 import { Animated } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { MainStackParamList } from '../../navigation/types';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MINIMUM_BUFFER_MS = 2000; // Minimum buffer size in milliseconds
@@ -34,8 +37,9 @@ interface VideoPlayerProps {
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   const { user } = useAuth();
   const { triggerRefresh } = useVideoList();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const [liked, setLiked] = useState(false);
-  const [likeCount, setLikeCount] = useState(video.likes);
+  const [likeCount, setLikeCount] = useState(video.likes || 0);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +64,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   const [showLikeAnimation, setShowLikeAnimation] = useState(false);
   const likeAnimationTimeout = useRef<NodeJS.Timeout>();
   const likeAnimScale = useRef(new Animated.Value(0)).current;
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
 
   const player = useVideoPlayer({
     uri: '',
@@ -69,58 +74,86 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
   });
 
   const loadVideo = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      setPlayerReady(false);
+    const maxRetries = 3;
+    let retryCount = 0;
 
-      if (!video.storagePath) {
-        throw new Error('No storage path available for video');
+    const tryLoadVideo = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        setPlayerReady(false);
+
+        if (!video.storagePath) {
+          throw new Error('No storage path available for video');
+        }
+
+        console.log('Loading video metadata:', video.metadata);
+        console.log('Video object:', {
+          id: video.id,
+          metadata: video.metadata,
+          storagePath: video.storagePath
+        });
+
+        const storage = getStorage();
+        const videoRef = ref(storage, video.storagePath);
+        const storageUrl = await getDownloadURL(videoRef);
+        const localFileName = `${FileSystem.cacheDirectory}video-${video.id}.mp4`;
+
+        const fileInfo = await FileSystem.getInfoAsync(localFileName);
+        if (!fileInfo.exists) {
+          await FileSystem.downloadAsync(storageUrl, localFileName);
+        }
+
+        try {
+          await player.replace({
+            uri: localFileName,
+            metadata: { title: video.title },
+          });
+        } catch (replaceError) {
+          console.error('Error replacing video:', replaceError);
+          // If the replace fails, try to delete the cached file and retry
+          if (fileInfo.exists) {
+            await FileSystem.deleteAsync(localFileName);
+            await FileSystem.downloadAsync(storageUrl, localFileName);
+            await player.replace({
+              uri: localFileName,
+              metadata: { title: video.title },
+            });
+          } else {
+            throw replaceError;
+          }
+        }
+
+        // Get video dimensions from metadata if available
+        if (video.metadata?.width && video.metadata?.height) {
+          const dimensions = {
+            width: video.metadata.width,
+            height: video.metadata.height
+          };
+          console.log('Setting video dimensions:', dimensions);
+          setVideoDimensions(dimensions);
+        } else {
+          console.log('No video dimensions in metadata');
+        }
+
+        setLoading(false);
+        setInitialLoad(false);
+
+      } catch (error: any) {
+        console.error('Error loading video:', error);
+        if (retryCount < maxRetries) {
+          retryCount++;
+          console.log(`Retrying video load (attempt ${retryCount}/${maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retrying
+          return tryLoadVideo();
+        }
+        setError('Failed to load video');
+        setLoading(false);
+        setInitialLoad(false);
       }
+    };
 
-      console.log('Loading video metadata:', video.metadata);
-      console.log('Video object:', {
-        id: video.id,
-        metadata: video.metadata,
-        storagePath: video.storagePath
-      });
-
-      const storage = getStorage();
-      const videoRef = ref(storage, video.storagePath);
-      const storageUrl = await getDownloadURL(videoRef);
-      const localFileName = `${FileSystem.cacheDirectory}video-${video.id}.mp4`;
-
-      const fileInfo = await FileSystem.getInfoAsync(localFileName);
-      if (!fileInfo.exists) {
-        await FileSystem.downloadAsync(storageUrl, localFileName);
-      }
-
-      await player.replace({
-        uri: localFileName,
-        metadata: { title: video.title },
-      });
-
-      // Get video dimensions from metadata if available
-      if (video.metadata?.width && video.metadata?.height) {
-        const dimensions = {
-          width: video.metadata.width,
-          height: video.metadata.height
-        };
-        console.log('Setting video dimensions:', dimensions);
-        setVideoDimensions(dimensions);
-      } else {
-        console.log('No video dimensions in metadata');
-      }
-
-      setLoading(false);
-      setInitialLoad(false);
-
-    } catch (error: any) {
-      console.error('Error loading video:', error);
-      setError('Failed to load video');
-      setLoading(false);
-      setInitialLoad(false);
-    }
+    return tryLoadVideo();
   }, [video, player]);
 
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
@@ -429,6 +462,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
     activeIndexAnim.setValue(index);
   };
 
+  const handleDescriptionPress = useCallback(() => {
+    setIsDescriptionExpanded(prev => !prev);
+  }, []);
+
   if (Platform.OS === 'web') {
     return (
       <video
@@ -473,7 +510,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
                   size={30}
                   color={liked ? theme.colors.like : theme.colors.text.primary}
                 />
-                <Text style={styles.controlText}>{likeCount}</Text>
+                <Text style={styles.controlText}>
+                  {likeCount > 0 ? likeCount.toString() : 'Like'}
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -503,7 +542,24 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible }) => {
 
             <View style={styles.bottomInfo}>
               <Text style={styles.title}>{video.title}</Text>
-              <Text style={styles.description}>{video.description}</Text>
+              <TouchableOpacity onPress={handleDescriptionPress} activeOpacity={0.7}>
+                <Text style={styles.description} numberOfLines={isDescriptionExpanded ? undefined : 1}>
+                  {video.description}
+                </Text>
+                {video.metadata?.hashtags && video.metadata.hashtags.length > 0 && (
+                  <Text style={styles.hashtags} numberOfLines={isDescriptionExpanded ? undefined : 1}>
+                    {video.metadata.hashtags.map((tag, index) => (
+                      <Text
+                        key={index}
+                        onPress={() => navigation.navigate('Hashtag', { tag })}
+                        style={styles.hashtag}
+                      >
+                        #{tag}{' '}
+                      </Text>
+                    ))}
+                  </Text>
+                )}
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -640,8 +696,9 @@ const styles = StyleSheet.create({
   rightControls: {
     position: 'absolute',
     right: theme.spacing.md,
-    bottom: Platform.OS === 'ios' ? 180 : 160,
+    bottom: Platform.OS === 'ios' ? 160 : 140,
     alignItems: 'center',
+    zIndex: 10,
   },
   controlButton: {
     alignItems: 'center',
@@ -674,6 +731,18 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.75)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 3,
+    marginBottom: theme.spacing.sm,
+  },
+  hashtags: {
+    color: theme.colors.text.primary,
+    fontSize: theme.typography.sizes.md,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+  },
+  hashtag: {
+    color: theme.colors.text.primary,
+    fontWeight: '700',
   },
   likeAnimation: {
     position: 'absolute',
@@ -686,6 +755,14 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
+  },
+  expandButton: {
+    color: theme.colors.text.secondary,
+    fontSize: theme.typography.sizes.sm,
+    marginTop: theme.spacing.xs,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
   },
 });
 
