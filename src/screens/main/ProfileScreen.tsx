@@ -136,6 +136,8 @@ export const ProfileScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedVideoForCategory, setSelectedVideoForCategory] = useState<SavedVideo | null>(null);
   const [showCategorySelectionModal, setShowCategorySelectionModal] = useState(false);
+  const [isTabSwitching, setIsTabSwitching] = useState(false);
+  const tabSwitchTimeout = useRef<NodeJS.Timeout>();
 
   // Add lastActiveTab ref to remember the last active tab
   const lastActiveTab = useRef<TabType>('liked');
@@ -340,24 +342,51 @@ export const ProfileScreen = () => {
 
   // Update handleTabPress to be more reliable
   const handleTabPress = (tab: TabType) => {
+    if (isTabSwitching || tab === activeTab) return;
+
+    setIsTabSwitching(true);
     setActiveTab(tab);
+    lastActiveTab.current = tab;
+
     if (scrollViewRef.current) {
       scrollViewRef.current.scrollTo({
-        x: tab === 'liked' ? 0 : SCREEN_WIDTH - theme.spacing.lg * 2,
+        x: tab === 'liked' ? 0 : PAGE_WIDTH,
         animated: true
       });
     }
+
+    // Clear any existing timeout
+    if (tabSwitchTimeout.current) {
+      clearTimeout(tabSwitchTimeout.current);
+    }
+
+    // Set a timeout to prevent rapid switching
+    tabSwitchTimeout.current = setTimeout(() => {
+      setIsTabSwitching(false);
+    }, 300);
   };
 
   // Update handleScroll to be more precise
   const handleScroll = (event: any) => {
+    if (isTabSwitching) return;
+
     const offsetX = event.nativeEvent.contentOffset.x;
-    const halfWidth = (SCREEN_WIDTH - theme.spacing.lg * 2) / 2;
-    const newTab = offsetX >= halfWidth ? 'saved' : 'liked';
+    const newTab = offsetX > PAGE_WIDTH / 2 ? 'saved' : 'liked';
+
     if (newTab !== activeTab) {
       setActiveTab(newTab);
+      lastActiveTab.current = newTab;
     }
   };
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (tabSwitchTimeout.current) {
+        clearTimeout(tabSwitchTimeout.current);
+      }
+    };
+  }, []);
 
   const handleUpdateCategory = async (videoId: string, category: string) => {
     if (!user) return;
