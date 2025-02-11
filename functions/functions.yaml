@@ -1,6 +1,22 @@
 specVersion: v1alpha1
-concurrency: 80
-timeoutSeconds: 540
-availableMemoryMb: 512
-runtime: python311
-entryPoint: generate_video_thumbnail
+endpoints:
+  generateVideoThumbnail:
+    platform: gcfv2
+    runtime: python311
+    entryPoint: generate_video_thumbnail
+    memory: 256Mi
+    maxInstances: 10
+    timeoutSeconds: 60
+    labels:
+      deployment-tool: cli-firebase
+    httpsTrigger: {}
+  analyzeScreenshot:
+    platform: gcfv2
+    runtime: python311
+    entryPoint: analyze_screenshot
+    memory: 256Mi
+    maxInstances: 10
+    timeoutSeconds: 60
+    labels:
+      deployment-tool: cli-firebase
+    httpsTrigger: {}

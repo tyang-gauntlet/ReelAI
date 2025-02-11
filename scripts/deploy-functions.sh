@@ -13,6 +13,7 @@ print_usage() {
     echo "  health              - Deploy health check function"
     echo "  thumbnail          - Deploy thumbnail generator function"
     echo "  hashtag           - Deploy hashtag generator function"
+    echo "  analyze           - Deploy image analysis function"
     echo "  all               - Deploy all functions (default if no arguments provided)"
     echo ""
     echo "Example:"
@@ -34,6 +35,8 @@ deploy_function() {
     local base_dir="$(dirname "$0")/../functions/python"
     if [ "$function_type" == "hashtag" ]; then
         cd "$base_dir/hashtag_generator" || exit
+    elif [ "$function_type" == "analyze" ]; then
+        cd "$base_dir/image_analyzer" || exit
     else
         cd "$base_dir/thumbnail_generator" || exit
     fi
@@ -118,11 +121,12 @@ if ! command -v gcloud &> /dev/null; then
 fi
 
 # Function configurations
-FUNCTION_NAMES=("health" "thumbnail" "hashtag")
+FUNCTION_NAMES=("health" "thumbnail" "hashtag" "analyze")
 FUNCTION_CONFIGS=(
     "thumbnail:generate-video-thumbnail-health:health:256MB:30s:0:1"
     "thumbnail:generate-video-thumbnail:generate_video_thumbnail:512MB:540s:0:10"
     "hashtag:generate-video-hashtags:generate_video_hashtags:2048MB:300s:0:10"
+    "analyze:analyze-screenshot:analyze_screenshot:512MB:60s:0:10"
 )
 
 # Function to get config for a function name

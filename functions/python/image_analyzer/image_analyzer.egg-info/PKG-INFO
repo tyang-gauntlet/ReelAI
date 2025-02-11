@@ -1,0 +1,8 @@
+Metadata-Version: 2.2
+Name: image_analyzer
+Version: 0.1.0
+Requires-Dist: openai>=1.0.0
+Requires-Dist: firebase-admin==6.4.0
+Requires-Dist: firebase-functions==0.1.2
+Requires-Dist: functions-framework==3.*
+Dynamic: requires-dist

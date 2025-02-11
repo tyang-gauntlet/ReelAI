@@ -92,7 +92,3 @@ export const generateVideoHashtags = onCall(hashtagOptions, async request => {
 export const health = onCall(healthOptions, async request => {
   return runPythonFunction('health', request.data);
 });
-
-export const listRootVideos = onCall(listVideosOptions, async request => {
-  return runPythonFunction('list_root_videos', request.data);
-});

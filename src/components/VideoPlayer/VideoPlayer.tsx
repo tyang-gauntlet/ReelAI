@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Platform, Dimensions, ActivityIndicator, Alert, Modal, TextInput } from 'react-native';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { View, StyleSheet, TouchableOpacity, Text, Platform, ActivityIndicator, Alert, Modal, TextInput } from 'react-native';
+import { useVideoPlayer, VideoView, VideoPlayer as ExpoVideoPlayer } from 'expo-video';
 import { Video as VideoType } from '../VideoFeed/VideoFeed';
-import { MaterialIcons, Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import { useEvent } from 'expo';
 import * as FileSystem from 'expo-file-system';
-import { getAuth, signInAnonymously } from 'firebase/auth';
 import { theme } from '../../styles/theme';
 import * as Clipboard from 'expo-clipboard';
 import { useAuth } from '../../hooks/useAuth';
@@ -18,15 +17,11 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../../navigation/types';
 import { useVideoState } from '../../contexts/VideoStateContext';
+import { AIAnalysisModal } from '../AIAnalysis/AIAnalysisModal';
+import { functions } from '../../config/firebase';
+import { httpsCallable } from 'firebase/functions';
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const MINIMUM_BUFFER_MS = 2000; // Minimum buffer size in milliseconds
 const VISIBILITY_DEBOUNCE_MS = 500; // Debounce time for visibility changes
-const BUFFER_INDICATOR_DELAY = 500; // Delay before showing buffer indicator
-const DOT_SIZE = 4;
-const EXPANDED_SIZE = 48; // Slightly larger base size
-const SPACING = 16;
-const ACTIVE_SCALE = 1.6; // Increased scale factor
 
 interface VideoPlayerProps {
   video: VideoType & {
@@ -39,90 +34,19 @@ interface VideoPlayerProps {
   onBackPress?: () => void;
 }
 
-interface CategoryModalProps {
-  visible: boolean;
-  onClose: () => void;
-  onSave: (category: string) => void;
-  existingCategory?: string;
+// Add interface for the analysis result
+interface AIAnalysis {
+  description: string;
+  subject: string;
+  action: string;
+  mood: string;
+  composition: string;
+  lighting: string;
+  technicalQuality: string;
+  environmentalContext: string;
+  cinematographicElements: string;
+  narrativeSignificance: string;
 }
-
-const CategoryModal: React.FC<CategoryModalProps> = ({
-  visible,
-  onClose,
-  onSave,
-  existingCategory
-}) => {
-  const [category, setCategory] = useState(existingCategory || '');
-  const [commonCategories] = useState([
-    'Favorites',
-    'Watch Later',
-    'Highlights',
-    'Training',
-    'Reference'
-  ]);
-
-  return (
-    <Modal
-      visible={visible}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={styles.categoryModalContainer}>
-        <View style={styles.categoryModalContent}>
-          <Text style={styles.categoryModalTitle}>
-            {existingCategory ? 'Edit Category' : 'Add to Category'}
-          </Text>
-
-          <View style={styles.commonCategoriesContainer}>
-            {commonCategories.map((cat) => (
-              <TouchableOpacity
-                key={cat}
-                style={[
-                  styles.commonCategoryPill,
-                  category === cat && styles.selectedCommonCategoryPill
-                ]}
-                onPress={() => setCategory(cat)}
-              >
-                <Text style={[
-                  styles.commonCategoryText,
-                  category === cat && styles.selectedCommonCategoryText
-                ]}>{cat}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <TextInput
-            style={styles.categoryInput}
-            value={category}
-            onChangeText={setCategory}
-            placeholder="Enter custom category"
-            placeholderTextColor={theme.colors.text.secondary}
-          />
-
-          <View style={styles.categoryModalButtons}>
-            <TouchableOpacity
-              style={[styles.categoryModalButton, styles.categoryModalCancelButton]}
-              onPress={onClose}
-            >
-              <Text style={styles.categoryModalButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.categoryModalButton, styles.categoryModalSaveButton]}
-              onPress={() => {
-                onSave(category);
-                onClose();
-              }}
-              disabled={!category.trim()}
-            >
-              <Text style={styles.categoryModalButtonText}>Save</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-};
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpdate, onHashtagPress, showBackButton, onBackPress }) => {
   const { user } = useAuth();
@@ -136,30 +60,23 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
   const [likeCount, setLikeCount] = useState(videoState.likes || video.likes);
   const [saved, setSaved] = useState(videoState.isSaved);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [buffering, setBuffering] = useState(false);
-  const [showBuffering, setShowBuffering] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(0);
   const [initialLoad, setInitialLoad] = useState(true);
   const [playerReady, setPlayerReady] = useState(false);
   const [userPaused, setUserPaused] = useState(false);
   const [debouncedIsVisible, setDebouncedIsVisible] = useState(isVisible);
   const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number } | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
   const [showLikeAnimation, setShowLikeAnimation] = useState(false);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
+  const [showAIAnalysis, setShowAIAnalysis] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<AIAnalysis | null>(null);
+  const videoRef = useRef<ExpoVideoPlayer>(null);
 
-  const bufferingTimeout = useRef<NodeJS.Timeout>();
-  const bufferIndicatorTimeout = useRef<NodeJS.Timeout>();
-  const lastPlayAttempt = useRef<number>(0);
-  const visibilityTimeout = useRef<NodeJS.Timeout>();
-  const expandAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnims = useRef(Array.from({ length: 4 }, () => new Animated.Value(0))).current;
-  const activeIndexAnim = useRef(new Animated.Value(0)).current;
   const lastTap = useRef<number>(0);
   const doubleTapTimeout = useRef<NodeJS.Timeout>();
   const likeAnimationTimeout = useRef<NodeJS.Timeout>();
   const likeAnimScale = useRef(new Animated.Value(0)).current;
+  const visibilityTimeout = useRef<NodeJS.Timeout>();
 
   const player = useVideoPlayer({
     uri: '',
@@ -168,6 +85,31 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     }
   });
 
+  // Add these state variables to track player status
+  const [currentPosition, setCurrentPosition] = useState(0);
+  const [currentStatus, setCurrentStatus] = useState('');
+
+  // Update the status change handler
+  const { status } = useEvent(player, 'statusChange', { status: player.status });
+  const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
+
+  // Add effect to update position and status
+  useEffect(() => {
+    if (status) {
+      setCurrentStatus(status);
+    }
+  }, [status]);
+
+  useEffect(() => {
+    const updatePosition = async () => {
+      if (status === 'readyToPlay') {
+        const position = await player.getCurrentPosition();
+        setCurrentPosition(position);
+      }
+    };
+    updatePosition();
+  }, [status, player]);
+
   const loadVideo = useCallback(async () => {
     const maxRetries = 3;
     let retryCount = 0;
@@ -175,19 +117,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     const tryLoadVideo = async () => {
       try {
         setLoading(true);
-        setError(null);
         setPlayerReady(false);
 
         if (!video.storagePath) {
           throw new Error('No storage path available for video');
         }
-
-        console.log('Loading video metadata:', video.metadata);
-        console.log('Video object:', {
-          id: video.id,
-          metadata: video.metadata,
-          storagePath: video.storagePath
-        });
 
         const storage = getStorage();
         const videoRef = ref(storage, video.storagePath);
@@ -206,7 +140,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
           });
         } catch (replaceError) {
           console.error('Error replacing video:', replaceError);
-          // If the replace fails, try to delete the cached file and retry
           if (fileInfo.exists) {
             await FileSystem.deleteAsync(localFileName);
             await FileSystem.downloadAsync(storageUrl, localFileName);
@@ -219,16 +152,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
           }
         }
 
-        // Get video dimensions from metadata if available
         if (video.metadata?.width && video.metadata?.height) {
-          const dimensions = {
+          setVideoDimensions({
             width: video.metadata.width,
             height: video.metadata.height
-          };
-          console.log('Setting video dimensions:', dimensions);
-          setVideoDimensions(dimensions);
-        } else {
-          console.log('No video dimensions in metadata');
+          });
         }
 
         setLoading(false);
@@ -238,11 +166,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
         console.error('Error loading video:', error);
         if (retryCount < maxRetries) {
           retryCount++;
-          console.log(`Retrying video load (attempt ${retryCount}/${maxRetries})...`);
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000));
           return tryLoadVideo();
         }
-        setError('Failed to load video');
         setLoading(false);
         setInitialLoad(false);
       }
@@ -250,53 +176,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
 
     return tryLoadVideo();
   }, [video, player]);
-
-  const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
-  const { status } = useEvent(player, 'statusChange', { status: player.status });
-
-  useEffect(() => {
-    const isCurrentlyBuffering = status === 'loading';
-    if (isCurrentlyBuffering !== buffering) {
-      setBuffering(isCurrentlyBuffering);
-
-      if (bufferIndicatorTimeout.current) {
-        clearTimeout(bufferIndicatorTimeout.current);
-      }
-
-      if (isCurrentlyBuffering && !initialLoad) {
-        bufferIndicatorTimeout.current = setTimeout(() => {
-          if (!initialLoad) {
-            setShowBuffering(true);
-          }
-        }, BUFFER_INDICATOR_DELAY);
-      } else {
-        setShowBuffering(false);
-      }
-    }
-
-    if (isCurrentlyBuffering) {
-      if (bufferingTimeout.current) {
-        clearTimeout(bufferingTimeout.current);
-      }
-    } else if (status === 'readyToPlay' && !isPlaying && isVisible && playerReady && !userPaused) {
-      const now = Date.now();
-      if (now - lastPlayAttempt.current >= MINIMUM_BUFFER_MS) {
-        bufferingTimeout.current = setTimeout(() => {
-          lastPlayAttempt.current = now;
-          player.play();
-        }, 500);
-      }
-    }
-
-    return () => {
-      if (bufferingTimeout.current) {
-        clearTimeout(bufferingTimeout.current);
-      }
-      if (bufferIndicatorTimeout.current) {
-        clearTimeout(bufferIndicatorTimeout.current);
-      }
-    };
-  }, [status, isVisible, player, playerReady, buffering, isPlaying, initialLoad, userPaused]);
 
   useEffect(() => {
     if (player) {
@@ -319,6 +198,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
       }
     };
   }, [isVisible]);
+
+  // Cleanup timeouts when component unmounts
+  useEffect(() => {
+    return () => {
+      if (visibilityTimeout.current) {
+        clearTimeout(visibilityTimeout.current);
+      }
+      if (doubleTapTimeout.current) {
+        clearTimeout(doubleTapTimeout.current);
+      }
+      if (likeAnimationTimeout.current) {
+        clearTimeout(likeAnimationTimeout.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handleVisibilityChange = async () => {
@@ -458,7 +352,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     ]).start(() => {
       setShowLikeAnimation(false);
     });
-  }, [liked, handleLike]);
+  }, [liked, handleLike, likeAnimScale]);
 
   const handlePress = useCallback(() => {
     const now = Date.now();
@@ -535,45 +429,73 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     hideNativeControls: true,
   };
 
-  const handleExpand = () => {
-    Animated.timing(expandAnim, {
-      toValue: 1,
-      duration: 500,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const handleCollapse = () => {
-    Animated.timing(expandAnim, {
-      toValue: 0,
-      duration: 500,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const handleScale = (index: number) => {
-    Animated.timing(scaleAnims[index], {
-      toValue: 1,
-      duration: 500,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const handleScaleBack = (index: number) => {
-    Animated.timing(scaleAnims[index], {
-      toValue: 0,
-      duration: 500,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const handleActiveIndex = (index: number) => {
-    activeIndexAnim.setValue(index);
-  };
-
   const handleDescriptionPress = useCallback(() => {
     setIsDescriptionExpanded(prev => !prev);
   }, []);
+
+  const analyzeCurrentFrame = async () => {
+    try {
+      setIsAnalyzing(true);
+
+      if (!video.storagePath) {
+        throw new Error('No video storage path available');
+      }
+
+      // Use the tracked position and status
+      const timestamp = currentPosition;
+
+      // Log what we're about to send
+      console.log('Sending analysis request:', {
+        videoPath: video.storagePath,
+        timestamp: timestamp,
+        fullVideo: video  // Log the full video object to see what we have
+      });
+
+      // Pause video while analyzing
+      if (isPlaying) {
+        await player.pause();
+      }
+
+      const response = await fetch('https://us-central1-reelai-c82fc.cloudfunctions.net/analyze_video', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          videoPath: video.storagePath,
+          timestamp: timestamp
+        })
+      });
+
+      // Log the response
+      const responseText = await response.text();
+      console.log('Raw response:', responseText);
+      const result = JSON.parse(responseText);
+
+      if (!result.analysis) {
+        throw new Error('No analysis result received');
+      }
+
+      console.log('Analysis result:', result.analysis);
+
+      // Update the analysis result state
+      setAnalysisResult(result.analysis);
+      setShowAIAnalysis(true);
+
+    } catch (error) {
+      console.error('Analysis error:', error);
+      Alert.alert(
+        'Analysis Failed',
+        'Could not analyze the current frame. Please try again.'
+      );
+    } finally {
+      setIsAnalyzing(false);
+      // Resume playback if it was playing before
+      if (isPlaying) {
+        player.play();
+      }
+    }
+  };
 
   if (Platform.OS === 'web') {
     return (
@@ -586,127 +508,151 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
   }
 
   return (
-    <View style={styles.container}>
-      <TouchableOpacity
-        style={styles.videoWrapper}
-        activeOpacity={1}
-        onPress={handlePress}
-      >
-        <View style={styles.videoContainer}>
-          <VideoView
-            player={player}
-            style={styles.video}
-            contentFit={getContentFit()}
-            {...videoViewConfig}
-          />
-        </View>
+    <>
+      <View style={styles.container}>
+        <TouchableOpacity
+          style={styles.videoWrapper}
+          activeOpacity={1}
+          onPress={handlePress}
+        >
+          <View style={styles.videoContainer}>
+            <VideoView
+              player={player}
+              style={styles.video}
+              contentFit={getContentFit()}
+              {...videoViewConfig}
+              ref={videoRef}
+            />
+          </View>
 
-        <View style={styles.overlayContainer} pointerEvents="box-none">
-          {showBackButton && (
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={onBackPress}
-            >
-              <Ionicons
-                name="chevron-back"
-                size={30}
-                color={theme.colors.text.primary}
-              />
-            </TouchableOpacity>
-          )}
-
-          {(loading || showBuffering) && (
-            <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="large" color={theme.colors.accent} />
-            </View>
-          )}
-
-          <View style={styles.controlsOverlay}>
-            <View style={styles.rightControls}>
+          <View style={styles.overlayContainer} pointerEvents="box-none">
+            {showBackButton && (
               <TouchableOpacity
-                style={styles.controlButton}
-                onPress={handleLike}
+                style={styles.backButton}
+                onPress={onBackPress}
               >
                 <Ionicons
-                  name={liked ? 'heart' : 'heart-outline'}
-                  size={30}
-                  color={liked ? theme.colors.like : theme.colors.text.primary}
-                />
-                <Text style={styles.controlText}>
-                  {likeCount > 0 ? likeCount.toString() : 'Like'}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.controlButton}
-                onPress={handleSave}
-              >
-                <Ionicons
-                  name={saved ? 'bookmark' : 'bookmark-outline'}
-                  size={30}
-                  color={saved ? theme.colors.accent : theme.colors.text.primary}
-                />
-                <Text style={styles.controlText}>Save</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.controlButton}
-                onPress={handleShare}
-              >
-                <Ionicons
-                  name="share-social-outline"
+                  name="chevron-back"
                   size={30}
                   color={theme.colors.text.primary}
                 />
-                <Text style={styles.controlText}>Share</Text>
               </TouchableOpacity>
+            )}
+
+            {(loading) && (
+              <View style={styles.loadingOverlay}>
+                <ActivityIndicator size="large" color={theme.colors.accent} />
+              </View>
+            )}
+
+            <View style={styles.controlsOverlay}>
+              <View style={styles.rightControls}>
+                <TouchableOpacity
+                  style={styles.controlButton}
+                  onPress={handleLike}
+                >
+                  <Ionicons
+                    name={liked ? 'heart' : 'heart-outline'}
+                    size={30}
+                    color={liked ? theme.colors.like : theme.colors.text.primary}
+                  />
+                  <Text style={styles.controlText}>
+                    {likeCount > 0 ? likeCount.toString() : 'Like'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.controlButton}
+                  onPress={handleSave}
+                >
+                  <Ionicons
+                    name={saved ? 'bookmark' : 'bookmark-outline'}
+                    size={30}
+                    color={saved ? theme.colors.accent : theme.colors.text.primary}
+                  />
+                  <Text style={styles.controlText}>Save</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.controlButton}
+                  onPress={handleShare}
+                >
+                  <Ionicons
+                    name="share-social-outline"
+                    size={30}
+                    color={theme.colors.text.primary}
+                  />
+                  <Text style={styles.controlText}>Share</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.controlButton, isAnalyzing && styles.controlButtonDisabled]}
+                  onPress={analyzeCurrentFrame}
+                  disabled={isAnalyzing}
+                >
+                  <Ionicons
+                    name="scan-outline"
+                    size={30}
+                    color={theme.colors.text.primary}
+                  />
+                  <Text style={styles.controlText}>
+                    {isAnalyzing ? 'Analyzing...' : 'Analyze'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.bottomInfo}>
+                <TouchableOpacity onPress={handleDescriptionPress} activeOpacity={0.7}>
+                  <Text style={styles.title} numberOfLines={isDescriptionExpanded ? undefined : 1}>
+                    {video.title}
+                  </Text>
+                  {video.description && (
+                    <Text style={styles.description} numberOfLines={isDescriptionExpanded ? undefined : 1}>
+                      {video.description}
+                    </Text>
+                  )}
+                  {isDescriptionExpanded && video.metadata?.hashtags && video.metadata.hashtags.length > 0 && (
+                    <Text style={styles.hashtags}>
+                      {video.metadata.hashtags.map((tag, index) => {
+                        // Ensure hashtag has '#' prefix for display
+                        const formattedTag = tag.startsWith('#') ? tag : `#${tag}`;
+                        return (
+                          <Text
+                            key={index}
+                            onPress={() => onHashtagPress?.(formattedTag)}
+                            style={styles.hashtag}
+                          >
+                            {formattedTag}{' '}
+                          </Text>
+                        );
+                      })}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
 
-            <View style={styles.bottomInfo}>
-              <TouchableOpacity onPress={handleDescriptionPress} activeOpacity={0.7}>
-                <Text style={styles.title} numberOfLines={isDescriptionExpanded ? undefined : 1}>
-                  {video.title}
-                </Text>
-                {video.description && (
-                  <Text style={styles.description} numberOfLines={isDescriptionExpanded ? undefined : 1}>
-                    {video.description}
-                  </Text>
-                )}
-                {isDescriptionExpanded && video.metadata?.hashtags && video.metadata.hashtags.length > 0 && (
-                  <Text style={styles.hashtags}>
-                    {video.metadata.hashtags.map((tag, index) => {
-                      // Ensure hashtag has '#' prefix for display
-                      const formattedTag = tag.startsWith('#') ? tag : `#${tag}`;
-                      return (
-                        <Text
-                          key={index}
-                          onPress={() => onHashtagPress?.(formattedTag)}
-                          style={styles.hashtag}
-                        >
-                          {formattedTag}{' '}
-                        </Text>
-                      );
-                    })}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
+            {showLikeAnimation && (
+              <Animated.View style={[styles.likeAnimation, {
+                transform: [{ scale: likeAnimScale }]
+              }]}>
+                <Ionicons
+                  name="heart"
+                  size={100}
+                  color={theme.colors.like}
+                />
+              </Animated.View>
+            )}
           </View>
+        </TouchableOpacity>
+      </View>
 
-          {showLikeAnimation && (
-            <Animated.View style={[styles.likeAnimation, {
-              transform: [{ scale: likeAnimScale }]
-            }]}>
-              <Ionicons
-                name="heart"
-                size={100}
-                color={theme.colors.like}
-              />
-            </Animated.View>
-          )}
-        </View>
-      </TouchableOpacity>
-    </View>
+      <AIAnalysisModal
+        visible={showAIAnalysis}
+        onClose={() => setShowAIAnalysis(false)}
+        analysis={analysisResult}
+      />
+    </>
   );
 };
 
@@ -815,87 +761,6 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 3,
   },
-  categoryModalContainer: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  categoryModalContent: {
-    backgroundColor: theme.colors.background,
-    borderTopLeftRadius: theme.borderRadius.lg,
-    borderTopRightRadius: theme.borderRadius.lg,
-    padding: theme.spacing.lg,
-    minHeight: 300,
-  },
-  categoryModalTitle: {
-    fontSize: theme.typography.sizes.lg,
-    fontWeight: theme.typography.weights.bold,
-    color: theme.colors.text.primary,
-    marginBottom: theme.spacing.lg,
-    textAlign: 'center',
-  },
-  commonCategoriesContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: theme.spacing.lg,
-    marginHorizontal: -4,
-    alignItems: 'center',
-  },
-  commonCategoryPill: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: 6,
-    borderRadius: 12,
-    backgroundColor: theme.colors.surface,
-    margin: 4,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 28,
-  },
-  selectedCommonCategoryPill: {
-    backgroundColor: 'transparent',
-    borderColor: theme.colors.accent,
-  },
-  commonCategoryText: {
-    color: theme.colors.text.secondary,
-    fontSize: 13,
-    fontWeight: '500',
-    lineHeight: 16,
-  },
-  selectedCommonCategoryText: {
-    color: theme.colors.accent,
-  },
-  categoryInput: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    color: theme.colors.text.primary,
-    marginBottom: theme.spacing.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  categoryModalButtons: {
-    flexDirection: 'row',
-    gap: theme.spacing.md,
-  },
-  categoryModalButton: {
-    flex: 1,
-    paddingVertical: theme.spacing.md,
-    borderRadius: theme.borderRadius.md,
-    alignItems: 'center',
-  },
-  categoryModalCancelButton: {
-    backgroundColor: theme.colors.surface,
-  },
-  categoryModalSaveButton: {
-    backgroundColor: theme.colors.accent,
-  },
-  categoryModalButtonText: {
-    color: theme.colors.text.primary,
-    fontSize: theme.typography.sizes.md,
-    fontWeight: theme.typography.weights.medium,
-  },
   backButton: {
     position: 'absolute',
     top: Platform.OS === 'ios' ? 60 : 30,
@@ -904,6 +769,12 @@ const styles = StyleSheet.create({
     padding: 8,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     borderRadius: 20,
+  },
+  controlButtonDisabled: {
+    opacity: 0.5,
+  },
+  controlTextDisabled: {
+    color: theme.colors.text.secondary,
   },
 });
 

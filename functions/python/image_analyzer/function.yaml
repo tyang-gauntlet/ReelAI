@@ -1,0 +1,13 @@
+specVersion: v1alpha1
+name: analyze_screenshot
+runtime: python311
+entryPoint: analyze_screenshot
+source: .
+environmentVariables:
+  PYTHONPATH: /workspace
+timeout: 60s
+availableMemory: 512Mi
+maxInstances: 10
+minInstances: 0
+labels:
+  deployment-tool: cli-firebase

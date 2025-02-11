@@ -8,6 +8,7 @@ import { MainStackParamList } from '../../navigation/types';
 import VideoPlayer from '../VideoPlayer/VideoPlayer';
 import { fetchVideosFromFirestore } from '../../services/videoService';
 import { theme } from '../../styles/theme';
+import VideoCard from '../VideoCard/VideoCard';
 
 const { height: WINDOW_HEIGHT, width: WINDOW_WIDTH } = Dimensions.get('window');
 

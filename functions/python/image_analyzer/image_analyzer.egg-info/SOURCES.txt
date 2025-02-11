@@ -1,0 +1,8 @@
+setup.py
+image_analyzer/__init__.py
+image_analyzer/main.py
+image_analyzer.egg-info/PKG-INFO
+image_analyzer.egg-info/SOURCES.txt
+image_analyzer.egg-info/dependency_links.txt
+image_analyzer.egg-info/requires.txt
+image_analyzer.egg-info/top_level.txt

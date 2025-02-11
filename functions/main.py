@@ -8,6 +8,7 @@ import tempfile
 import firebase_functions as functions
 from firebase_admin import initialize_app, storage, firestore
 import logging
+from python.image_analyzer.image_analyzer.main import analyze_image
 
 # Initialize Firebase Admin
 initialize_app()
@@ -142,3 +143,17 @@ def generate_video_thumbnail(request: functions.CallableRequest) -> Dict[str, An
                 f"Error updating failure status: {str(update_error)}")
 
         return {"error": error_msg}
+
+
+@functions.on_call()
+def analyze_screenshot(request: functions.CallableRequest) -> Dict[str, Any]:
+    """Cloud Function to analyze an image using Google Cloud Vision API."""
+    try:
+        image_data = request.data.get('imageData')
+        if not image_data:
+            raise ValueError('No image data provided')
+
+        return analyze_image(image_data)
+    except Exception as e:
+        logging.error(f"Error in analyze_screenshot: {str(e)}")
+        raise functions.HttpsError('internal', str(e))
