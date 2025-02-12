@@ -1,14 +1,16 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, FlatList, Dimensions, ActivityIndicator, ViewToken, StyleSheet, Text, TouchableOpacity, Platform, Animated } from 'react-native';
-import { QueryDocumentSnapshot } from 'firebase/firestore';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
+import { View, FlatList, Dimensions, ActivityIndicator, ViewToken, StyleSheet, Text, TouchableOpacity, Platform, Animated, Image } from 'react-native';
+import { QueryDocumentSnapshot, collection, query, where, orderBy, limit, getDocs, startAfter, doc, getDoc } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { MainStackParamList } from '../../navigation/types';
 import VideoPlayer from '../VideoPlayer/VideoPlayer';
-import { fetchVideosFromFirestore } from '../../services/videoService';
+import { db } from '../../config/firebase';
 import { theme } from '../../styles/theme';
 import VideoCard from '../VideoCard/VideoCard';
+import { useAuth } from '../../hooks/useAuth';
+import { fetchVideosFromFirestore } from '../../services/videoService';
 
 const { height: WINDOW_HEIGHT, width: WINDOW_WIDTH } = Dimensions.get('window');
 
@@ -38,9 +40,11 @@ export interface Video {
 
 interface VideoFeedProps {
   hashtagFilter?: string;
+  isPersonalized?: boolean;
 }
 
-const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter }) => {
+const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = false }) => {
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
@@ -51,52 +55,300 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter }) => {
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [visibleVideoIndex, setVisibleVideoIndex] = useState<number>(0);
+  const [followedHashtags, setFollowedHashtags] = useState<string[]>([]);
+  const [isFetching, setIsFetching] = useState(false);
+  const fetchedVideoIds = useRef(new Set<string>());
+  const fetchDebounceTimeout = useRef<NodeJS.Timeout>();
+  const isInitialLoad = useRef(true);
+  const [endReached, setEndReached] = useState(false);
+  const [isScrolling, setIsScrolling] = useState(false);
+  const scrollViewRef = useRef(null);
+
+  const MAX_VIDEOS_IN_MEMORY = 10;
+  const MAX_CACHED_IDS = 50;
+
+  const fetchUserHashtags = useCallback(async () => {
+    if (!user) return;
+    try {
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+      if (userDocSnap.exists()) {
+        setFollowedHashtags(userDocSnap.data()?.followedHashtags || []);
+      }
+    } catch (error) {
+      console.error('Error fetching user hashtags:', error);
+    }
+  }, [user]);
+
+  const fetchPersonalizedVideos = useCallback(async () => {
+    if (!user || followedHashtags.length === 0) {
+      // Fetch all videos and randomly select from them
+      const videosRef = collection(db, 'videos');
+      let q = query(
+        videosRef,
+        orderBy('createdAt', 'desc'),
+        limit(20)
+      );
+
+      const querySnapshot = await getDocs(q);
+      const allVideos = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as Video[];
+
+      // Randomly shuffle the videos
+      const shuffledVideos = [...allVideos].sort(() => Math.random() - 0.5);
+
+      // Take first 3 videos
+      const fetchedVideos = shuffledVideos.slice(0, 3);
+
+      return {
+        videos: fetchedVideos,
+        lastDoc: null,
+        hasMore: true,
+      };
+    }
+
+    // For personalized feed, fetch videos with matching hashtags
+    const videosRef = collection(db, 'videos');
+    let q = query(
+      videosRef,
+      where('metadata.normalizedHashtags', 'array-contains-any', followedHashtags),
+      orderBy('createdAt', 'desc'),
+      limit(20)
+    );
+
+    const querySnapshot = await getDocs(q);
+    const videos = querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    })) as Video[];
+
+    // Score and sort videos based on hashtag matches
+    const scoredVideos = videos.map(video => {
+      const matchingTags = (video.metadata?.normalizedHashtags || []).filter(tag =>
+        followedHashtags.includes(tag)
+      );
+      return {
+        ...video,
+        score: matchingTags.length,
+      };
+    });
+
+    // Sort by score (descending) and then randomly within same scores
+    scoredVideos.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return Math.random() - 0.5;
+    });
+
+    // Take top 3 videos
+    const selectedVideos = scoredVideos.slice(0, 3);
+
+    return {
+      videos: selectedVideos,
+      lastDoc: null,
+      hasMore: true,
+    };
+  }, [user, followedHashtags]);
 
   const fetchVideos = useCallback(async (lastDocument?: QueryDocumentSnapshot) => {
-    try {
-      const result = await fetchVideosFromFirestore(lastDocument, hashtagFilter);
-      setLastDoc(result.lastDoc);
-      setHasMore(result.hasMore);
+    // Don't fetch if we're already fetching, unless it's the initial load
+    if (isFetching && !isInitialLoad.current) {
+      console.log('Skipping fetch - already fetching');
+      return;
+    }
 
-      if (lastDocument) {
-        setVideos(prev => [...prev, ...result.videos]);
+    try {
+      setIsFetching(true);
+      console.log('Starting video fetch:', { isInitialLoad: isInitialLoad.current });
+
+      let result;
+      if (isPersonalized) {
+        result = await fetchPersonalizedVideos();
       } else {
-        setVideos(result.videos);
+        // Fetch all videos and randomly select from them
+        const videosRef = collection(db, 'videos');
+        let q = query(
+          videosRef,
+          orderBy('createdAt', 'desc'),
+          limit(50)  // Increased limit since we'll filter after fetching
+        );
+
+        const querySnapshot = await getDocs(q);
+        const allVideos = querySnapshot.docs
+          .map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+          })) as Video[];
+
+        // Filter completed videos after fetching
+        const completedVideos = allVideos.filter(video => video.processingStatus === 'completed');
+
+        if (completedVideos.length === 0) {
+          console.log('No completed videos found');
+          setIsFetching(false);
+          return;
+        }
+
+        // Randomly shuffle the completed videos
+        const shuffledVideos = [...completedVideos].sort(() => Math.random() - 0.5);
+
+        // Take first 4 videos instead of 3
+        const fetchedVideos = shuffledVideos.slice(0, 4);
+
+        result = {
+          videos: fetchedVideos,
+          lastDoc: null,
+          hasMore: true,
+        };
       }
 
-      console.log('Videos loaded:', {
+      // Filter out videos we've already seen
+      const newVideos = result.videos.filter(
+        newVideo => !fetchedVideoIds.current.has(newVideo.id)
+      );
+
+      console.log('Filtered videos:', {
+        totalVideos: result.videos.length,
+        newVideos: newVideos.length,
+        seenVideos: fetchedVideoIds.current.size,
+      });
+
+      // If we got no new videos, clear the cache and try again
+      if (newVideos.length === 0) {
+        console.log('No new videos, clearing cache and retrying');
+        fetchedVideoIds.current.clear();
+        setVideos([]); // Clear all videos to prevent duplicates
+        setIsFetching(false);
+        setTimeout(() => fetchVideos(), 0);
+        return;
+      }
+
+      // Update our set of seen videos, maintaining maximum cache size
+      newVideos.forEach(video => {
+        if (fetchedVideoIds.current.size >= MAX_CACHED_IDS) {
+          const oldestId = Array.from(fetchedVideoIds.current)[0];
+          fetchedVideoIds.current.delete(oldestId);
+        }
+        fetchedVideoIds.current.add(video.id);
+      });
+
+      // Update videos list, maintaining maximum size
+      setVideos(prev => {
+        const updatedVideos = [...prev, ...newVideos];
+        if (updatedVideos.length > MAX_VIDEOS_IN_MEMORY) {
+          // Keep only the most recent videos
+          return updatedVideos.slice(-MAX_VIDEOS_IN_MEMORY);
+        }
+        return updatedVideos;
+      });
+
+      console.log('Videos loaded successfully:', {
         count: result.videos.length,
-        hasStoragePath: result.videos.filter(v => v.storagePath).length,
-        videosWithHashtags: result.videos.filter(v => v.metadata?.hashtags?.length).length,
-        hashtags: result.videos.map(v => v.metadata?.hashtags),
+        newVideosCount: newVideos.length,
+        totalFetchedIds: fetchedVideoIds.current.size,
+        totalVideosInMemory: videos.length,
+        isPersonalized,
+        followedHashtagsCount: followedHashtags.length,
       });
     } catch (error) {
       console.error('Error fetching videos:', error);
     } finally {
-      setLoading(false);
+      if (isInitialLoad.current) {
+        setLoading(false);
+        isInitialLoad.current = false;
+      }
+      setIsFetching(false);
     }
-  }, [hashtagFilter]);
+  }, [isPersonalized, followedHashtags, fetchPersonalizedVideos, videos.length]);
 
   useEffect(() => {
-    fetchVideos();
-  }, [fetchVideos]);
+    if (isPersonalized) {
+      fetchUserHashtags();
+    }
+  }, [isPersonalized, fetchUserHashtags]);
 
-  const loadMore = () => {
-    if (!hasMore || loading || !lastDoc) return;
-    fetchVideos(lastDoc);
-  };
+  useEffect(() => {
+    // Reset states when filter or personalization changes
+    isInitialLoad.current = true;
+    setIsFetching(false);
+    setLoading(true);
+    setEndReached(false);
+    fetchedVideoIds.current.clear();
+    setLastDoc(null);
+    setVideos([]);
+    fetchVideos();
+
+    // Cleanup function
+    return () => {
+      isInitialLoad.current = true;
+      setEndReached(false);
+      fetchedVideoIds.current.clear();
+      if (fetchDebounceTimeout.current) {
+        clearTimeout(fetchDebounceTimeout.current);
+      }
+    };
+  }, [hashtagFilter, isPersonalized]);
+
+  const loadMore = useCallback(() => {
+    // Don't load more if we're in initial load or already fetching
+    if (isInitialLoad.current || isFetching) {
+      console.log('Skipping loadMore:', {
+        isInitialLoad: isInitialLoad.current,
+        isFetching,
+      });
+      return;
+    }
+
+    // Clear any existing timeout
+    if (fetchDebounceTimeout.current) {
+      clearTimeout(fetchDebounceTimeout.current);
+    }
+
+    console.log('Scheduling loadMore');
+    // Debounce the fetch call
+    fetchDebounceTimeout.current = setTimeout(() => {
+      if (!isFetching) {
+        console.log('Executing loadMore');
+        fetchVideos();
+      } else {
+        console.log('Skipping scheduled loadMore - already fetching');
+      }
+    }, 300);
+  }, [isFetching, fetchVideos]);
+
+  // Reset end reached when videos change
+  useEffect(() => {
+    if (videos.length === 0) {
+      setEndReached(false);
+    }
+  }, [videos]);
+
+  const onScrollBeginDrag = useCallback(() => {
+    setIsScrolling(true);
+  }, []);
+
+  const onScrollEndDrag = useCallback(() => {
+    setTimeout(() => setIsScrolling(false), 150); // Small delay to ensure scroll has settled
+  }, []);
 
   const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
     if (viewableItems.length > 0) {
       const visibleItem = viewableItems[0];
-      setVisibleVideoIndex(visibleItem.index ?? 0);
-      console.log('Video visibility changed:', {
-        index: visibleItem.index,
-        videoId: videos[visibleItem.index ?? 0]?.id,
-        isViewable: visibleItem.isViewable,
-      });
+      const newIndex = visibleItem.index ?? 0;
+
+      // Only update visible index if we're not actively scrolling
+      if (!isScrolling) {
+        setVisibleVideoIndex(newIndex);
+      }
+
+      // Start loading more videos when we reach the third video
+      if (newIndex >= videos.length - 2 && !isFetching) {
+        console.log('Preemptively loading more videos');
+        loadMore();
+      }
     }
-  }, [videos]);
+  }, [videos, isScrolling, isFetching, loadMore]);
 
   const handleHashtagPress = (hashtag: string) => {
     // Ensure hashtag has '#' prefix
@@ -127,18 +379,36 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter }) => {
   };
 
   const renderItem = useCallback(({ item, index }: { item: Video; index: number }) => {
+    console.log('Rendering video item:', {
+      index,
+      videoId: item.id,
+      isVisible: index === visibleVideoIndex,
+      isFocused,
+      totalVideos: videos.length
+    });
+
+    // Increase the render window to prevent rapid unmounting
+    const shouldRender = Math.abs(index - visibleVideoIndex) <= 2;
+
     return (
       <View style={[styles.pageContainer, { height: pageHeight }]}>
         <View style={styles.pageContent}>
-          <VideoPlayer
-            video={item}
-            isVisible={index === visibleVideoIndex && isFocused}
-            onHashtagPress={handleHashtagPress}
-          />
+          {shouldRender ? (
+            <VideoPlayer
+              key={`${item.id}-${index}`}
+              video={item}
+              isVisible={index === visibleVideoIndex && isFocused && !isScrolling}
+              onHashtagPress={handleHashtagPress}
+            />
+          ) : (
+            <View style={styles.placeholderContainer}>
+              <View style={styles.placeholderBackground} />
+            </View>
+          )}
         </View>
       </View>
     );
-  }, [visibleVideoIndex, isFocused, pageHeight, handleHashtagPress]);
+  }, [visibleVideoIndex, isFocused, pageHeight, handleHashtagPress, videos.length, isScrolling]);
 
   if (loading && videos.length === 0) {
     return (
@@ -152,17 +422,22 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter }) => {
     <View style={styles.container}>
       <View style={[styles.feedContainer, { height: pageHeight }]}>
         <FlatList
+          ref={scrollViewRef}
           data={videos}
           renderItem={renderItem}
           keyExtractor={item => item.id}
           pagingEnabled
           showsVerticalScrollIndicator={false}
           onEndReached={loadMore}
-          onEndReachedThreshold={0.5}
+          onEndReachedThreshold={1}
           onViewableItemsChanged={onViewableItemsChanged}
+          onScrollBeginDrag={onScrollBeginDrag}
+          onScrollEndDrag={onScrollEndDrag}
+          onMomentumScrollBegin={() => setIsScrolling(true)}
+          onMomentumScrollEnd={() => setTimeout(() => setIsScrolling(false), 150)}
           viewabilityConfig={{
             itemVisiblePercentThreshold: 50,
-            minimumViewTime: 0,
+            minimumViewTime: 100,
           }}
           getItemLayout={(data, index) => ({
             length: pageHeight,
@@ -170,16 +445,23 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter }) => {
             index,
           })}
           snapToInterval={pageHeight}
-          decelerationRate="fast"
-          removeClippedSubviews={true}
-          initialNumToRender={1}
-          maxToRenderPerBatch={2}
-          windowSize={3}
-          ListFooterComponent={loading && videos.length > 0 ? (
-            <View style={[styles.footerContainer, { height: pageHeight }]}>
-              <ActivityIndicator size="small" color={theme.colors.accent} />
-            </View>
-          ) : null}
+          decelerationRate={Platform.OS === 'ios' ? 0.992 : 0.98}
+          removeClippedSubviews={false}
+          initialNumToRender={4}
+          maxToRenderPerBatch={4}
+          windowSize={7}
+          updateCellsBatchingPeriod={100}
+          maintainVisibleContentPosition={{
+            minIndexForVisible: 0,
+            autoscrollToTopThreshold: 3,
+          }}
+          ListFooterComponent={
+            isFetching ? (
+              <View style={[styles.quietLoadingContainer]}>
+                <ActivityIndicator size="small" color={theme.colors.accent} />
+              </View>
+            ) : null
+          }
           style={styles.list}
         />
       </View>
@@ -208,11 +490,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
-  footerContainer: {
+  footerLoadingContainer: {
     width: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: theme.colors.background,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    position: 'absolute',
+    bottom: 20,
+    left: 0,
+    right: 0,
+    paddingVertical: 10,
   },
   loadingContainer: {
     flex: 1,
@@ -236,6 +523,35 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.75)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 3,
+  },
+  loadingText: {
+    color: theme.colors.text.primary,
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  placeholderContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeholderBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#1a1a1a',
+  },
+  quietLoadingContainer: {
+    position: 'absolute',
+    top: 20,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 20,
+    padding: 8,
+    zIndex: 100,
   },
 });
 
