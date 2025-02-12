@@ -54,13 +54,6 @@
     "@react-native-masked-view/masked-view": "0.3.2"
   },
   "devDependencies": {
-    "@babel/core": "^7.26.7",
-    "@firebase/app-types": "^0.9.3",
-    "@firebase/auth-types": "^0.12.3",
-    "@firebase/firestore-types": "^3.0.3",
-    "@firebase/storage-types": "^0.8.3",
-    "@react-native-community/cli": "latest",
-    "@types/firebase": "^3.2.3",
     "@types/react": "~18.3.12",
     "@types/react-native": "^0.73.0",
     "@typescript-eslint/eslint-plugin": "^8.23.0",
