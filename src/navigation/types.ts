@@ -14,7 +14,8 @@ export type TabStackParamList = {
 export type MainStackParamList = {
   Tabs: NavigatorScreenParams<TabStackParamList>;
   Hashtag: {
-    tag: string;
+    tag?: string;
+    mode?: 'followed';
   };
   Profile: undefined;
 };

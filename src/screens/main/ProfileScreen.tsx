@@ -12,7 +12,7 @@ import { collection, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { generateThumbnailsForExistingVideos } from '../../services/videoService';
 import { useVideoList } from '../../contexts/VideoListContext';
-import { useNavigation, CompositeNavigationProp, useIsFocused } from '@react-navigation/native';
+import { useNavigation, CompositeNavigationProp, useIsFocused, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { MainStackParamList, RootStackParamList } from '../../navigation/types';
@@ -125,7 +125,7 @@ export const ProfileScreen = () => {
   const [likedVideos, setLikedVideos] = useState<VideoType[]>([]);
   const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [thumbnails, setThumbnails] = useState<{ [key: string]: string }>({});
   const [loadingThumbnails, setLoadingThumbnails] = useState<{ [key: string]: boolean }>({});
   const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
@@ -139,9 +139,12 @@ export const ProfileScreen = () => {
   const [isTabSwitching, setIsTabSwitching] = useState(false);
   const tabSwitchTimeout = useRef<NodeJS.Timeout>();
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
+  const lastFetchTimeRef = useRef<number>(0);
+  const FETCH_COOLDOWN = 60000; // 1 minute cooldown between fetches
 
   // Add lastActiveTab ref to remember the last active tab
   const lastActiveTab = useRef<TabType>('liked');
+  const isFirstLoadRef = useRef(true);
 
   useEffect(() => {
     if (activeTab !== lastActiveTab.current) {
@@ -149,49 +152,65 @@ export const ProfileScreen = () => {
     }
   }, [activeTab]);
 
-  useEffect(() => {
-    const fetchVideos = async () => {
-      if (!user || !isFocused) return;
+  // Replace useEffect with useFocusEffect for better control
+  useFocusEffect(
+    React.useCallback(() => {
+      const fetchVideos = async () => {
+        if (!user) return;
 
-      try {
-        setLoading(true);
-        const [liked, saved] = await Promise.all([
-          getLikedVideos(user.uid),
-          getSavedVideos(user.uid)
-        ]);
-
-        initializeVideoState(
-          [...liked, ...saved],
-          liked.map(v => v.id),
-          saved.map(v => v.id)
-        );
-
-        setLikedVideos(liked);
-        setSavedVideos(saved);
-
-        // After setting the videos, update the UI state
-        if (lastActiveTab.current === 'saved') {
-          setActiveTab('saved');
-          // Use requestAnimationFrame to ensure the ScrollView is ready
-          requestAnimationFrame(() => {
-            if (scrollViewRef.current) {
-              scrollViewRef.current.scrollTo({
-                x: PAGE_WIDTH,
-                animated: false
-              });
-            }
-          });
+        const now = Date.now();
+        // Skip fetch if we recently fetched data
+        if (now - lastFetchTimeRef.current < FETCH_COOLDOWN && likedVideos.length > 0) {
+          setInitialLoading(false);
+          return;
         }
-      } catch (error) {
-        console.error('Error fetching videos:', error);
-        Alert.alert('Error', 'Failed to load videos');
-      } finally {
-        setLoading(false);
-      }
-    };
 
-    fetchVideos();
-  }, [user, refreshTrigger, isFocused, initializeVideoState]);
+        try {
+          // Only show loading spinner on first load
+          if (isFirstLoadRef.current) {
+            setInitialLoading(true);
+          }
+
+          const [liked, saved] = await Promise.all([
+            getLikedVideos(user.uid),
+            getSavedVideos(user.uid)
+          ]);
+
+          initializeVideoState(
+            [...liked, ...saved],
+            liked.map(v => v.id),
+            saved.map(v => v.id)
+          );
+
+          setLikedVideos(liked);
+          setSavedVideos(saved);
+          lastFetchTimeRef.current = now;
+          isFirstLoadRef.current = false;
+
+          // After setting the videos, update the UI state
+          if (lastActiveTab.current === 'saved') {
+            setActiveTab('saved');
+            // Use requestAnimationFrame to ensure the ScrollView is ready
+            requestAnimationFrame(() => {
+              if (scrollViewRef.current) {
+                scrollViewRef.current.scrollTo({
+                  x: PAGE_WIDTH,
+                  animated: false
+                });
+              }
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching videos:', error);
+          Alert.alert('Error', 'Failed to load videos');
+        } finally {
+          setInitialLoading(false);
+        }
+      };
+
+      fetchVideos();
+    }, [user, refreshTrigger, initializeVideoState])
+  );
 
   // Get unique categories from saved videos
   const categories = React.useMemo(() => {
@@ -312,7 +331,7 @@ export const ProfileScreen = () => {
     // Refresh videos when modal is closed to ensure we have the latest state
     if (user) {
       try {
-        setLoading(true);
+        setInitialLoading(true);
         if (activeTab === 'liked') {
           const videos = await getLikedVideos(user.uid);
           setLikedVideos(videos);
@@ -323,7 +342,7 @@ export const ProfileScreen = () => {
       } catch (error) {
         console.error('Error refreshing videos:', error);
       } finally {
-        setLoading(false);
+        setInitialLoading(false);
       }
     }
   };
@@ -457,18 +476,14 @@ export const ProfileScreen = () => {
     }
   };
 
-  const handleRefresh = async () => {
-    if (!user) return;
+  // Force refresh when needed
+  const handleForceRefresh = async () => {
+    lastFetchTimeRef.current = 0; // Reset the cooldown
     setRefreshing(true);
     try {
-      // Clean up duplicates first if it's the test account
-      if (user.email === 'test@realai.com') {
-        await cleanupDuplicateSavedVideos(user.uid);
-      }
-
       const [liked, saved] = await Promise.all([
-        getLikedVideos(user.uid),
-        getSavedVideos(user.uid)
+        getLikedVideos(user?.uid || ''),
+        getSavedVideos(user?.uid || '')
       ]);
 
       initializeVideoState(
@@ -485,6 +500,12 @@ export const ProfileScreen = () => {
     } finally {
       setRefreshing(false);
     }
+  };
+
+  // Update the handleRefresh function to use handleForceRefresh
+  const handleRefresh = () => {
+    if (!user) return;
+    handleForceRefresh();
   };
 
   const handleLongPress = (video: VideoType) => {
@@ -514,7 +535,7 @@ export const ProfileScreen = () => {
   const handleCleanupDuplicates = async () => {
     if (!user) return;
     try {
-      setLoading(true);
+      setInitialLoading(true);
       const removedCount = await cleanupDuplicateSavedVideos(user.uid);
       Alert.alert('Success', `Removed ${removedCount} duplicate videos`);
       // Refresh the list after cleanup
@@ -523,7 +544,7 @@ export const ProfileScreen = () => {
       console.error('Error cleaning up duplicates:', error);
       Alert.alert('Error', 'Failed to clean up duplicates');
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
     }
   };
 
@@ -715,10 +736,33 @@ export const ProfileScreen = () => {
     </Modal>
   );
 
-  if (loading) {
+  if (initialLoading) {
     return (
       <SafeScreen backgroundColor={theme.colors.background}>
         <View style={styles.container}>
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => navigation.goBack()}
+            >
+              <Ionicons name="chevron-back" size={28} color={theme.colors.text.primary} />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Profile</Text>
+            <View style={styles.headerButtons}>
+              <TouchableOpacity
+                style={styles.headerButton}
+                onPress={() => navigation.navigate('Hashtag', { mode: 'followed' })}
+              >
+                <Ionicons name="pricetag" size={24} color={theme.colors.text.primary} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.headerButton}
+                onPress={handleLogout}
+              >
+                <Ionicons name="log-out-outline" size={24} color={theme.colors.error} />
+              </TouchableOpacity>
+            </View>
+          </View>
           <View style={styles.centerContent}>
             <ActivityIndicator size="large" color={theme.colors.accent} />
           </View>
@@ -737,12 +781,20 @@ export const ProfileScreen = () => {
           <Ionicons name="chevron-back" size={28} color={theme.colors.text.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Profile</Text>
-        <TouchableOpacity
-          style={styles.logoutButton}
-          onPress={handleLogout}
-        >
-          <Ionicons name="log-out-outline" size={24} color={theme.colors.error} />
-        </TouchableOpacity>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={() => navigation.navigate('Hashtag', { mode: 'followed' })}
+          >
+            <Ionicons name="pricetag" size={24} color={theme.colors.text.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={handleLogout}
+          >
+            <Ionicons name="log-out-outline" size={24} color={theme.colors.error} />
+          </TouchableOpacity>
+        </View>
       </View>
       <View style={styles.profileContent}>
         <View style={styles.avatarContainer}>
@@ -920,14 +972,14 @@ export const ProfileScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: theme.spacing.lg,
+    paddingTop: Platform.OS === 'ios' ? theme.spacing.xl : theme.spacing.sm,
     paddingHorizontal: theme.spacing.lg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: theme.spacing.lg,
+    padding: theme.spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
@@ -941,34 +993,39 @@ const styles = StyleSheet.create({
     color: theme.colors.text.primary,
     textAlign: 'center',
   },
-  logoutButton: {
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.xs,
+  },
+  headerButton: {
     padding: theme.spacing.xs,
   },
   profileContent: {
     alignItems: 'center',
-    marginTop: '15%',
+    marginTop: '5%',
   },
   avatarContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: theme.colors.surface,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: theme.spacing.sm,
+    marginBottom: theme.spacing.xs,
   },
   email: {
     color: theme.colors.text.primary,
     fontSize: theme.typography.sizes.md,
-    marginTop: theme.spacing.sm,
+    marginTop: theme.spacing.xs,
     fontWeight: theme.typography.weights.semibold,
   },
   tabsContainer: {
     flexDirection: 'row',
-    marginTop: theme.spacing.xl,
+    marginTop: theme.spacing.lg,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   tab: {
     flex: 1,

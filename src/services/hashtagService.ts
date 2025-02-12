@@ -52,7 +52,7 @@ export const unfollowHashtag = async (userId: string, hashtag: string) => {
   }
 };
 
-export const isHashtagFollowed = async (userId: string, hashtag: string) => {
+export const isHashtagFollowed = async (userId: string, hashtag: string): Promise<boolean> => {
   try {
     // Remove '#' if present and convert to lowercase for consistency
     const normalizedHashtag = hashtag.replace('#', '').toLowerCase();
@@ -66,4 +66,12 @@ export const isHashtagFollowed = async (userId: string, hashtag: string) => {
     console.error('Error checking if hashtag is followed:', error);
     return false;
   }
+};
+
+export const getFollowedHashtags = async (userId: string): Promise<string[]> => {
+  const userRef = doc(db, 'users', userId);
+  const userDoc = await getDoc(userRef);
+  const data = userDoc.data();
+  const hashtags: string[] = data?.followedHashtags || [];
+  return hashtags.map((tag: string) => (tag.startsWith('#') ? tag : `#${tag}`));
 };
