@@ -387,8 +387,11 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
       totalVideos: videos.length
     });
 
-    // Increase the render window to prevent rapid unmounting
-    const shouldRender = Math.abs(index - visibleVideoIndex) <= 2;
+    // Increase the preload window to load more videos in advance
+    const shouldRender = Math.abs(index - visibleVideoIndex) <= 3;
+    // Consider videos within 1 position of current as "visible" to trigger preloading
+    const isNearVisible = Math.abs(index - visibleVideoIndex) <= 1;
+    const isActive = index === visibleVideoIndex && isFocused && !isScrolling;
 
     return (
       <View style={[styles.pageContainer, { height: pageHeight }]}>
@@ -397,7 +400,7 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
             <VideoPlayer
               key={`${item.id}-${index}`}
               video={item}
-              isVisible={index === visibleVideoIndex && isFocused && !isScrolling}
+              isVisible={isActive || isNearVisible}
               onHashtagPress={handleHashtagPress}
             />
           ) : (
@@ -447,10 +450,10 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
           snapToInterval={pageHeight}
           decelerationRate={Platform.OS === 'ios' ? 0.992 : 0.98}
           removeClippedSubviews={false}
-          initialNumToRender={4}
-          maxToRenderPerBatch={4}
-          windowSize={7}
-          updateCellsBatchingPeriod={100}
+          initialNumToRender={6} // Increased from 4 to 6
+          maxToRenderPerBatch={6} // Increased from 4 to 6
+          windowSize={9} // Increased from 7 to 9
+          updateCellsBatchingPeriod={50} // Decreased from 100 to 50
           maintainVisibleContentPosition={{
             minIndexForVisible: 0,
             autoscrollToTopThreshold: 3,
