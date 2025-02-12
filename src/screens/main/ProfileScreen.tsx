@@ -989,7 +989,7 @@ export const ProfileScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: Platform.OS === 'ios' ? theme.spacing.xl : theme.spacing.sm,
+    paddingTop: Platform.OS === 'ios' ? theme.spacing.xxl : theme.spacing.xl,
     paddingHorizontal: theme.spacing.lg,
   },
   header: {
@@ -997,6 +997,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: theme.spacing.md,
+    paddingTop: theme.spacing.lg,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
     position: 'relative',
@@ -1013,6 +1014,7 @@ const styles = StyleSheet.create({
     fontWeight: theme.typography.weights.bold,
     color: theme.colors.text.primary,
     textAlign: 'center',
+
   },
   headerButtons: {
     flexDirection: 'row',
