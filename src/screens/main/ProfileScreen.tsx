@@ -884,18 +884,30 @@ export const ProfileScreen = () => {
             })}
             onViewableItemsChanged={({ viewableItems }) => {
               if (viewableItems.length > 0) {
-                setSelectedVideo(viewableItems[0].item);
-                setCurrentVideoIndex(viewableItems[0].index || 0);
+                // Debounce the video selection to prevent rapid changes
+                if (viewableItems[0].item.id !== selectedVideo.id) {
+                  setSelectedVideo(viewableItems[0].item);
+                  setCurrentVideoIndex(viewableItems[0].index || 0);
+                }
               }
             }}
             viewabilityConfig={{
-              itemVisiblePercentThreshold: 50
+              itemVisiblePercentThreshold: 80, // Increase threshold to reduce premature loading
+              minimumViewTime: 100, // Add minimum view time to prevent rapid switches
             }}
             removeClippedSubviews={true}
             windowSize={3}
-            maxToRenderPerBatch={2}
+            maxToRenderPerBatch={1} // Reduce batch size
             initialNumToRender={1}
-            vertical
+            updateCellsBatchingPeriod={100} // Add batching period to prevent too frequent updates
+            onScrollBeginDrag={() => {
+              // Optional: Pause video when scrolling starts
+              // This can help reduce resource usage during rapid scrolling
+            }}
+            onMomentumScrollEnd={() => {
+              // Optional: Resume video when scrolling ends
+              // This ensures smooth playback after rapid scrolling
+            }}
           />
         </View>
       )}

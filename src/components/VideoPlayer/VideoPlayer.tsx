@@ -23,6 +23,8 @@ import { httpsCallable } from 'firebase/functions';
 import { requestAnalysis } from '../../services/aiAnalysisService';
 
 const VISIBILITY_DEBOUNCE_MS = 500; // Debounce time for visibility changes
+const MAX_LOAD_RETRIES = 3;
+const RETRY_DELAY = 1000;
 
 interface VideoPlayerProps {
   video: VideoType & {
@@ -112,63 +114,61 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     }
   }, [isPlaying, video.id]);
 
-  const loadVideo = useCallback(async () => {
-    const maxRetries = 3;
-    let retryCount = 0;
+  const mountedRef = useRef(true);
+  const loadAttemptRef = useRef(0);
+  const loadTimeoutRef = useRef<NodeJS.Timeout>();
 
-    const tryLoadVideo = async () => {
+  const loadVideo = useCallback(async () => {
+    if (!mountedRef.current) return;
+
+    // Clear any existing load timeout
+    if (loadTimeoutRef.current) {
+      clearTimeout(loadTimeoutRef.current);
+      loadTimeoutRef.current = undefined;
+    }
+
+    try {
+      console.log('Starting video load:', {
+        videoId: video.id,
+        attempt: loadAttemptRef.current + 1,
+        timestamp: new Date().toISOString()
+      });
+
+      setLoading(true);
+      setPlayerReady(false);
+
+      if (!video.storagePath) {
+        throw new Error('No storage path available for video');
+      }
+
+      const storage = getStorage();
+      const videoRef = ref(storage, video.storagePath);
+      const storageUrl = await getDownloadURL(videoRef);
+      const localFileName = `${FileSystem.cacheDirectory}video-${video.id}.mp4`;
+
+      const fileInfo = await FileSystem.getInfoAsync(localFileName);
+
+      // If file exists but previous load failed, try deleting and redownloading
+      if (fileInfo.exists && loadAttemptRef.current > 0) {
+        await FileSystem.deleteAsync(localFileName, { idempotent: true });
+        await FileSystem.downloadAsync(storageUrl, localFileName);
+      } else if (!fileInfo.exists) {
+        await FileSystem.downloadAsync(storageUrl, localFileName);
+      }
+
+      if (!mountedRef.current) return;
+
       try {
-        console.log('Starting video load:', {
+        console.log('Replacing video source:', {
           videoId: video.id,
+          localFileName,
           timestamp: new Date().toISOString()
         });
 
-        setLoading(true);
-        setPlayerReady(false);
-
-        if (!video.storagePath) {
-          throw new Error('No storage path available for video');
-        }
-
-        const storage = getStorage();
-        const videoRef = ref(storage, video.storagePath);
-        const storageUrl = await getDownloadURL(videoRef);
-        const localFileName = `${FileSystem.cacheDirectory}video-${video.id}.mp4`;
-
-        const fileInfo = await FileSystem.getInfoAsync(localFileName);
-        if (!fileInfo.exists) {
-          console.log('Downloading video:', {
-            videoId: video.id,
-            storageUrl,
-            localFileName,
-            timestamp: new Date().toISOString()
-          });
-          await FileSystem.downloadAsync(storageUrl, localFileName);
-        }
-
-        try {
-          console.log('Replacing video source:', {
-            videoId: video.id,
-            localFileName,
-            timestamp: new Date().toISOString()
-          });
-          await player.replace({
-            uri: localFileName,
-            metadata: { title: video.title },
-          });
-        } catch (replaceError) {
-          console.error('Error replacing video:', replaceError);
-          if (fileInfo.exists) {
-            await FileSystem.deleteAsync(localFileName);
-            await FileSystem.downloadAsync(storageUrl, localFileName);
-            await player.replace({
-              uri: localFileName,
-              metadata: { title: video.title },
-            });
-          } else {
-            throw replaceError;
-          }
-        }
+        await player.replace({
+          uri: localFileName,
+          metadata: { title: video.title },
+        });
 
         if (video.metadata?.width && video.metadata?.height) {
           setVideoDimensions({
@@ -177,27 +177,35 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
           });
         }
 
-        console.log('Video load complete:', {
-          videoId: video.id,
-          timestamp: new Date().toISOString()
-        });
-
+        loadAttemptRef.current = 0; // Reset attempts on success
         setLoading(false);
         setInitialLoad(false);
 
-      } catch (error: any) {
-        console.error('Error loading video:', error);
-        if (retryCount < maxRetries) {
-          retryCount++;
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          return tryLoadVideo();
-        }
-        setLoading(false);
-        setInitialLoad(false);
+      } catch (replaceError) {
+        console.error('Error replacing video:', replaceError);
+        throw replaceError;
       }
-    };
 
-    return tryLoadVideo();
+    } catch (error) {
+      console.error('Error loading video:', error);
+
+      if (!mountedRef.current) return;
+
+      loadAttemptRef.current++;
+
+      if (loadAttemptRef.current < MAX_LOAD_RETRIES) {
+        console.log(`Retrying video load (attempt ${loadAttemptRef.current + 1}/${MAX_LOAD_RETRIES})`);
+        loadTimeoutRef.current = setTimeout(() => {
+          if (mountedRef.current) {
+            loadVideo();
+          }
+        }, RETRY_DELAY);
+      } else {
+        setLoading(false);
+        setInitialLoad(false);
+        console.error(`Failed to load video after ${MAX_LOAD_RETRIES} attempts`);
+      }
+    }
   }, [video, player]);
 
   useEffect(() => {
@@ -216,7 +224,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     }
 
     visibilityTimeout.current = setTimeout(() => {
-      setDebouncedIsVisible(isVisible);
+      if (mountedRef.current) {
+        setDebouncedIsVisible(isVisible);
+      }
     }, VISIBILITY_DEBOUNCE_MS);
 
     return () => {
@@ -229,6 +239,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
   // Cleanup timeouts when component unmounts
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+      }
       if (visibilityTimeout.current) {
         clearTimeout(visibilityTimeout.current);
       }
@@ -237,6 +251,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
       }
       if (likeAnimationTimeout.current) {
         clearTimeout(likeAnimationTimeout.current);
+      }
+      if (positionInterval.current) {
+        clearInterval(positionInterval.current);
       }
     };
   }, []);
@@ -260,8 +277,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
   }, [debouncedIsVisible, player, status, playerReady, userPaused]);
 
   useEffect(() => {
-    loadVideo();
-  }, [video.id, loadVideo]);
+    if (isVisible) {
+      loadVideo();
+    }
+  }, [video.id, isVisible, loadVideo]);
 
   useEffect(() => {
     if (status === 'readyToPlay' && !playerReady) {
