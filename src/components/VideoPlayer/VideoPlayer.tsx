@@ -77,6 +77,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
   const likeAnimationTimeout = useRef<NodeJS.Timeout>();
   const likeAnimScale = useRef(new Animated.Value(0)).current;
   const visibilityTimeout = useRef<NodeJS.Timeout>();
+  const spinValue = useRef(new Animated.Value(0)).current;
 
   const player = useVideoPlayer({
     uri: '',
@@ -291,39 +292,36 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
   }, [player, playerReady, debouncedIsVisible]);
 
   const handleLike = useCallback(async () => {
+    if (!user) return;
+
+    // Optimistically update UI first
+    const newLiked = !liked;
+    const newLikeCount = likeCount + (newLiked ? 1 : -1);
+    setLiked(newLiked);
+    setLikeCount(newLikeCount);
+    updateVideoState(video.id, {
+      isLiked: newLiked,
+      likes: newLikeCount
+    });
+    onVideoUpdate?.(video.id, { liked: newLiked });
+
+    // Then update database
     try {
-      if (!user) return;
-
-      const newLiked = !liked;
-      const newLikeCount = likeCount + (newLiked ? 1 : -1);
-
-      // Optimistically update UI and context
-      setLiked(newLiked);
-      setLikeCount(newLikeCount);
-      updateVideoState(video.id, {
-        isLiked: newLiked,
-        likes: newLikeCount
-      });
-
-      if (liked) {
-        await unlikeVideo(user.uid, video.id);
-      } else {
+      if (newLiked) {
         await likeVideo(user.uid, video.id);
+      } else {
+        await unlikeVideo(user.uid, video.id);
       }
-
-      // Notify parent component of the update
-      onVideoUpdate?.(video.id, { liked: newLiked });
-
-      // Trigger refresh of video lists
       triggerRefresh();
     } catch (error) {
-      // Revert UI and context on error
-      setLiked(liked);
+      // Revert UI on error
+      setLiked(!newLiked);
       setLikeCount(likeCount);
       updateVideoState(video.id, {
-        isLiked: liked,
+        isLiked: !newLiked,
         likes: likeCount
       });
+      onVideoUpdate?.(video.id, { liked: !newLiked });
       console.error('Error toggling like:', error);
       Alert.alert('Error', 'Failed to update like status');
     }
@@ -401,17 +399,27 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
       return;
     }
 
+    // Optimistically update UI first
+    const newSaved = !saved;
+    setSaved(newSaved);
+    updateVideoState(video.id, { isSaved: newSaved });
+    onVideoUpdate?.(video.id, { saved: newSaved });
+
+    // Then update database
     try {
-      await saveVideo(user.uid, video.id);
-      setSaved(true);
-      updateVideoState(video.id, { isSaved: true });
-      if (onVideoUpdate) {
-        onVideoUpdate(video.id, { saved: true });
+      if (newSaved) {
+        await saveVideo(user.uid, video.id);
+      } else {
+        await unsaveVideo(user.uid, video.id);
       }
       triggerRefresh();
     } catch (error) {
-      console.error('Error saving video:', error);
-      Alert.alert('Error', 'Failed to save video');
+      // Revert UI on error
+      setSaved(!newSaved);
+      updateVideoState(video.id, { isSaved: !newSaved });
+      onVideoUpdate?.(video.id, { saved: !newSaved });
+      console.error('Error toggling save status:', error);
+      Alert.alert('Error', 'Failed to update save status');
     }
   };
 
@@ -496,6 +504,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
       }
     }
   };
+
+  useEffect(() => {
+    if (isAnalyzing) {
+      Animated.loop(
+        Animated.timing(spinValue, {
+          toValue: 1,
+          duration: 2000,
+          useNativeDriver: true,
+        })
+      ).start();
+    } else {
+      spinValue.setValue(0);
+    }
+  }, [isAnalyzing]);
 
   if (Platform.OS === 'web') {
     return (
@@ -590,13 +612,22 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
                   onPress={analyzeCurrentFrame}
                   disabled={isAnalyzing}
                 >
-                  <Ionicons
-                    name="scan-outline"
-                    size={30}
-                    color={theme.colors.text.primary}
-                  />
+                  <Animated.View style={{
+                    transform: [{
+                      rotate: spinValue.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0deg', '360deg']
+                      })
+                    }]
+                  }}>
+                    <Ionicons
+                      name="scan-outline"
+                      size={30}
+                      color={theme.colors.text.primary}
+                    />
+                  </Animated.View>
                   <Text style={styles.controlText}>
-                    {isAnalyzing ? 'Analyzing...' : 'Analyze'}
+                    AI
                   </Text>
                 </TouchableOpacity>
               </View>
