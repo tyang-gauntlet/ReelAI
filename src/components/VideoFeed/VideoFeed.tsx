@@ -162,19 +162,71 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
 
     try {
       setIsFetching(true);
-      console.log('Starting video fetch:', { isInitialLoad: isInitialLoad.current });
+      console.log('Starting video fetch:', {
+        isInitialLoad: isInitialLoad.current,
+        hashtagFilter,
+        isPersonalized
+      });
 
       let result;
       if (isPersonalized) {
         result = await fetchPersonalizedVideos();
       } else {
-        // Fetch all videos and randomly select from them
+        // Fetch videos based on hashtag filter if provided
         const videosRef = collection(db, 'videos');
-        let q = query(
-          videosRef,
-          orderBy('createdAt', 'desc'),
-          limit(50)  // Increased limit since we'll filter after fetching
-        );
+        let q;
+
+        if (hashtagFilter) {
+          // Remove '#' if present and convert to lowercase for normalized search
+          const normalizedHashtag = hashtagFilter.replace('#', '').toLowerCase().trim();
+          console.log('Searching for hashtag:', {
+            original: hashtagFilter,
+            normalized: normalizedHashtag
+          });
+
+          // First, let's get all videos to check their structure
+          const debugQuery = query(
+            videosRef,
+            orderBy('createdAt', 'desc'),
+            limit(5)
+          );
+
+          const debugSnapshot = await getDocs(debugQuery);
+          console.log('Debug: First few videos structure:',
+            debugSnapshot.docs.map(doc => ({
+              id: doc.id,
+              metadata: doc.data().metadata,
+              hashtags: doc.data().metadata?.hashtags,
+              normalizedHashtags: doc.data().metadata?.normalizedHashtags
+            }))
+          );
+
+          // Try multiple variations of the hashtag
+          const hashtagVariations = [
+            normalizedHashtag,
+            '#' + normalizedHashtag,
+            normalizedHashtag.toLowerCase(),
+            '#' + normalizedHashtag.toLowerCase(),
+            hashtagFilter,
+            hashtagFilter.toLowerCase()
+          ];
+
+          console.log('Trying hashtag variations:', hashtagVariations);
+
+          // Query with all variations
+          q = query(
+            videosRef,
+            where('metadata.hashtags', 'array-contains-any', hashtagVariations),
+            orderBy('createdAt', 'desc'),
+            limit(50)
+          );
+        } else {
+          q = query(
+            videosRef,
+            orderBy('createdAt', 'desc'),
+            limit(50)
+          );
+        }
 
         const querySnapshot = await getDocs(q);
         const allVideos = querySnapshot.docs
@@ -182,6 +234,12 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
             id: doc.id,
             ...doc.data(),
           })) as Video[];
+
+        console.log('Query results:', {
+          totalVideos: allVideos.length,
+          hashtags: allVideos.map(v => v.metadata?.normalizedHashtags),
+          hashtagFilter
+        });
 
         // Filter completed videos after fetching
         const completedVideos = allVideos.filter(video => video.processingStatus === 'completed');
@@ -192,16 +250,15 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
           return;
         }
 
-        // Randomly shuffle the completed videos
-        const shuffledVideos = [...completedVideos].sort(() => Math.random() - 0.5);
-
-        // Take first 4 videos instead of 3
-        const fetchedVideos = shuffledVideos.slice(0, 4);
+        // For hashtag filtered videos, we don't need to shuffle
+        const fetchedVideos = hashtagFilter
+          ? completedVideos
+          : [...completedVideos].sort(() => Math.random() - 0.5).slice(0, 4);
 
         result = {
           videos: fetchedVideos,
-          lastDoc: null,
-          hasMore: true,
+          lastDoc: querySnapshot.docs[querySnapshot.docs.length - 1] || null,
+          hasMore: querySnapshot.docs.length === 50,
         };
       }
 
@@ -262,7 +319,7 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
       }
       setIsFetching(false);
     }
-  }, [isPersonalized, followedHashtags, fetchPersonalizedVideos, videos.length]);
+  }, [isPersonalized, followedHashtags, fetchPersonalizedVideos, videos.length, hashtagFilter]);
 
   useEffect(() => {
     if (isPersonalized) {
@@ -302,6 +359,12 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
       return;
     }
 
+    // Don't load more if we have less than 4 videos and we're in hashtag mode
+    if (hashtagFilter && videos.length < 4) {
+      console.log('Skipping loadMore: Not enough videos in hashtag mode');
+      return;
+    }
+
     // Clear any existing timeout
     if (fetchDebounceTimeout.current) {
       clearTimeout(fetchDebounceTimeout.current);
@@ -317,7 +380,7 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
         console.log('Skipping scheduled loadMore - already fetching');
       }
     }, 300);
-  }, [isFetching, fetchVideos]);
+  }, [isFetching, fetchVideos, videos.length, hashtagFilter]);
 
   // Reset end reached when videos change
   useEffect(() => {
@@ -349,13 +412,13 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
         lastVisibleIndex.current = newIndex;
       }
 
-      // Start loading more videos when we reach the third video
-      if (newIndex >= videos.length - 2 && !isFetching) {
+      // Only try to load more if we're not in hashtag mode or we have at least 4 videos
+      if ((!hashtagFilter || videos.length >= 4) && newIndex >= videos.length - 2 && !isFetching) {
         console.log('Preemptively loading more videos');
         loadMore();
       }
     }
-  }, [videos, isScrolling, isFetching, loadMore]);
+  }, [videos, isScrolling, isFetching, loadMore, hashtagFilter]);
 
   const handleHashtagPress = (hashtag: string) => {
     // Ensure hashtag has '#' prefix
