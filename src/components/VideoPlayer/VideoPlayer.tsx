@@ -519,6 +519,42 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     }
   }, [isAnalyzing]);
 
+  const handleHashtagPress = useCallback((hashtag: string) => {
+    if (onHashtagPress) {
+      // Use the provided handler from parent component
+      const formattedHashtag = hashtag.startsWith('#') ? hashtag : `#${hashtag}`;
+      onHashtagPress(formattedHashtag);
+    } else {
+      // Navigate to hashtag screen while keeping current screen in stack
+      const formattedHashtag = hashtag.startsWith('#') ? hashtag : `#${hashtag}`;
+      navigation.push('Hashtag', { tag: formattedHashtag });
+    }
+  }, [onHashtagPress, navigation]);
+
+  // Update the hashtags rendering in the bottomInfo section
+  const renderHashtags = () => {
+    if (!video.metadata?.hashtags || video.metadata.hashtags.length === 0) {
+      return null;
+    }
+
+    return (
+      <View style={styles.hashtagsContainer}>
+        {video.metadata.hashtags.map((tag, index) => {
+          const formattedTag = tag.startsWith('#') ? tag : `#${tag}`;
+          return (
+            <TouchableOpacity
+              key={index}
+              onPress={() => handleHashtagPress(formattedTag)}
+              style={styles.hashtagButton}
+            >
+              <Text style={styles.hashtagText}>{formattedTag}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    );
+  };
+
   if (Platform.OS === 'web') {
     return (
       <video
@@ -642,23 +678,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
                       {video.description}
                     </Text>
                   )}
-                  {isDescriptionExpanded && video.metadata?.hashtags && video.metadata.hashtags.length > 0 && (
-                    <Text style={styles.hashtags}>
-                      {video.metadata.hashtags.map((tag, index) => {
-                        // Ensure hashtag has '#' prefix for display
-                        const formattedTag = tag.startsWith('#') ? tag : `#${tag}`;
-                        return (
-                          <Text
-                            key={index}
-                            onPress={() => onHashtagPress?.(formattedTag)}
-                            style={styles.hashtag}
-                          >
-                            {formattedTag}{' '}
-                          </Text>
-                        );
-                      })}
-                    </Text>
-                  )}
+                  {isDescriptionExpanded && renderHashtags()}
                 </TouchableOpacity>
               </View>
             </View>
@@ -806,6 +826,23 @@ const styles = StyleSheet.create({
   },
   controlTextDisabled: {
     color: theme.colors.text.secondary,
+  },
+  hashtagButton: {
+    marginRight: theme.spacing.sm,
+    marginBottom: theme.spacing.xs,
+  },
+  hashtagsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: theme.spacing.xs,
+  },
+  hashtagText: {
+    color: theme.colors.text.primary,
+    fontSize: theme.typography.sizes.md,
+    fontWeight: theme.typography.weights.bold,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
   },
 });
 

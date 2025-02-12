@@ -530,7 +530,8 @@ export const ProfileScreen = () => {
   const handleHashtagPress = (hashtag: string) => {
     // Ensure hashtag has '#' prefix
     const formattedHashtag = hashtag.startsWith('#') ? hashtag : `#${hashtag}`;
-    navigation.navigate('Hashtag', { tag: formattedHashtag });
+    // Use push instead of navigate to stack the screen
+    navigation.push('Hashtag', { tag: formattedHashtag });
   };
 
   const renderVideoItem = ({ item: video }: { item: VideoType }) => {
@@ -803,54 +804,48 @@ export const ProfileScreen = () => {
       </ScrollView>
 
       {selectedVideo && (
-        <Modal
-          visible={!!selectedVideo}
-          animationType="slide"
-          presentationStyle="fullScreen"
-        >
-          <View style={styles.modalContainer}>
-            <FlatList
-              data={activeTab === 'liked'
-                ? likedVideos.filter(v => getVideoState(v.id).isLiked)
-                : filteredSavedVideos.filter(v => getVideoState(v.id).isSaved)}
-              renderItem={({ item }) => (
-                <View style={styles.videoPlayerContainer}>
-                  <VideoPlayer
-                    video={item}
-                    isVisible={item.id === selectedVideo.id}
-                    onVideoUpdate={handleVideoUpdate}
-                    onHashtagPress={handleHashtagPress}
-                    showBackButton={true}
-                    onBackPress={handleCloseVideo}
-                  />
-                </View>
-              )}
-              keyExtractor={item => item.id}
-              pagingEnabled
-              showsVerticalScrollIndicator={false}
-              initialScrollIndex={currentVideoIndex}
-              getItemLayout={(data, index) => ({
-                length: Dimensions.get('window').height,
-                offset: Dimensions.get('window').height * index,
-                index,
-              })}
-              onViewableItemsChanged={({ viewableItems }) => {
-                if (viewableItems.length > 0) {
-                  setSelectedVideo(viewableItems[0].item);
-                  setCurrentVideoIndex(viewableItems[0].index || 0);
-                }
-              }}
-              viewabilityConfig={{
-                itemVisiblePercentThreshold: 50
-              }}
-              removeClippedSubviews={true}
-              windowSize={3}
-              maxToRenderPerBatch={2}
-              initialNumToRender={1}
-              vertical
-            />
-          </View>
-        </Modal>
+        <View style={[styles.modalContainer, StyleSheet.absoluteFill]}>
+          <FlatList
+            data={activeTab === 'liked'
+              ? likedVideos.filter(v => getVideoState(v.id).isLiked)
+              : filteredSavedVideos.filter(v => getVideoState(v.id).isSaved)}
+            renderItem={({ item }) => (
+              <View style={styles.videoPlayerContainer}>
+                <VideoPlayer
+                  video={item}
+                  isVisible={item.id === selectedVideo.id}
+                  onVideoUpdate={handleVideoUpdate}
+                  onHashtagPress={handleHashtagPress}
+                  showBackButton={true}
+                  onBackPress={handleCloseVideo}
+                />
+              </View>
+            )}
+            keyExtractor={item => item.id}
+            pagingEnabled
+            showsVerticalScrollIndicator={false}
+            initialScrollIndex={currentVideoIndex}
+            getItemLayout={(data, index) => ({
+              length: Dimensions.get('window').height,
+              offset: Dimensions.get('window').height * index,
+              index,
+            })}
+            onViewableItemsChanged={({ viewableItems }) => {
+              if (viewableItems.length > 0) {
+                setSelectedVideo(viewableItems[0].item);
+                setCurrentVideoIndex(viewableItems[0].index || 0);
+              }
+            }}
+            viewabilityConfig={{
+              itemVisiblePercentThreshold: 50
+            }}
+            removeClippedSubviews={true}
+            windowSize={3}
+            maxToRenderPerBatch={2}
+            initialNumToRender={1}
+            vertical
+          />
+        </View>
       )}
 
       <Modal
@@ -1104,8 +1099,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalContainer: {
-    flex: 1,
     backgroundColor: '#000',
+    zIndex: 1,
   },
   statsRow: {
     flexDirection: 'row',
