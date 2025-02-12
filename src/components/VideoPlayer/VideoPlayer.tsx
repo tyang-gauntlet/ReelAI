@@ -732,7 +732,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
                     }]
                   }}>
                     <Ionicons
-                      name="scan-outline"
+                      name="sparkles-outline"
                       size={30}
                       color={theme.colors.text.primary}
                     />
