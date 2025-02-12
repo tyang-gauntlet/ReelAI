@@ -12,7 +12,7 @@ import { collection, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { generateThumbnailsForExistingVideos } from '../../services/videoService';
 import { useVideoList } from '../../contexts/VideoListContext';
-import { useNavigation, CompositeNavigationProp, useIsFocused, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, CompositeNavigationProp, useIsFocused, useFocusEffect, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { MainStackParamList, RootStackParamList } from '../../navigation/types';
@@ -24,6 +24,8 @@ type ProfileScreenNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<MainStackParamList, 'Profile'>,
   NativeStackNavigationProp<RootStackParamList>
 >;
+
+type HashtagScreenRouteProp = RouteProp<MainStackParamList, 'Hashtag'>;
 
 type TabType = 'liked' | 'saved';
 
@@ -551,8 +553,11 @@ export const ProfileScreen = () => {
   const handleHashtagPress = (hashtag: string) => {
     // Ensure hashtag has '#' prefix
     const formattedHashtag = hashtag.startsWith('#') ? hashtag : `#${hashtag}`;
-    // Use push instead of navigate to stack the screen
-    navigation.push('Hashtag', { tag: formattedHashtag });
+    // Navigate to hashtag screen with proper stacking
+    navigation.navigate('MainTabs', {
+      screen: 'Hashtag',
+      params: { tag: formattedHashtag }
+    });
   };
 
   const renderVideoItem = ({ item: video }: { item: VideoType }) => {
@@ -753,7 +758,7 @@ export const ProfileScreen = () => {
                 style={styles.headerButton}
                 onPress={() => navigation.navigate('Hashtag', { mode: 'followed' })}
               >
-                <Ionicons name="pricetag" size={24} color={theme.colors.text.primary} />
+                <Text style={{ color: theme.colors.text.primary, fontSize: 24, fontWeight: '600' }}>#</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.headerButton}
@@ -786,7 +791,7 @@ export const ProfileScreen = () => {
             style={styles.headerButton}
             onPress={() => navigation.navigate('Hashtag', { mode: 'followed' })}
           >
-            <Ionicons name="pricetag" size={24} color={theme.colors.text.primary} />
+            <Text style={{ color: theme.colors.text.primary, fontSize: 24, fontWeight: '600' }}>#</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerButton}
@@ -994,9 +999,13 @@ const styles = StyleSheet.create({
     padding: theme.spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+    position: 'relative',
   },
   backButton: {
     padding: theme.spacing.xs,
+    position: 'absolute',
+    left: theme.spacing.md,
+    zIndex: 1,
   },
   headerTitle: {
     flex: 1,
@@ -1009,6 +1018,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.spacing.xs,
+    position: 'absolute',
+    right: theme.spacing.md,
+    zIndex: 1,
   },
   headerButton: {
     padding: theme.spacing.xs,
