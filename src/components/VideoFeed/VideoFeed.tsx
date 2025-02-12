@@ -63,6 +63,8 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
   const [endReached, setEndReached] = useState(false);
   const [isScrolling, setIsScrolling] = useState(false);
   const scrollViewRef = useRef(null);
+  const [preloadedVideos] = useState(() => new Set<string>());
+  const lastVisibleIndex = useRef<number>(0);
 
   const MAX_VIDEOS_IN_MEMORY = 10;
   const MAX_CACHED_IDS = 50;
@@ -332,6 +334,10 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
     setTimeout(() => setIsScrolling(false), 150); // Small delay to ensure scroll has settled
   }, []);
 
+  const trackPreloadedVideo = useCallback((videoId: string) => {
+    preloadedVideos.add(videoId);
+  }, [preloadedVideos]);
+
   const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
     if (viewableItems.length > 0) {
       const visibleItem = viewableItems[0];
@@ -340,6 +346,7 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
       // Only update visible index if we're not actively scrolling
       if (!isScrolling) {
         setVisibleVideoIndex(newIndex);
+        lastVisibleIndex.current = newIndex;
       }
 
       // Start loading more videos when we reach the third video
@@ -384,7 +391,8 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
       videoId: item.id,
       isVisible: index === visibleVideoIndex,
       isFocused,
-      totalVideos: videos.length
+      totalVideos: videos.length,
+      isPreloaded: preloadedVideos.has(item.id)
     });
 
     // Increase the preload window to load more videos in advance
@@ -393,12 +401,17 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
     const isNearVisible = Math.abs(index - visibleVideoIndex) <= 1;
     const isActive = index === visibleVideoIndex && isFocused && !isScrolling;
 
+    // Track this video as preloaded if it's being rendered
+    if (shouldRender && !preloadedVideos.has(item.id)) {
+      trackPreloadedVideo(item.id);
+    }
+
     return (
       <View style={[styles.pageContainer, { height: pageHeight }]}>
         <View style={styles.pageContent}>
           {shouldRender ? (
             <VideoPlayer
-              key={`${item.id}-${index}`}
+              key={`${item.id}`}
               video={item}
               isVisible={isActive || isNearVisible}
               onHashtagPress={handleHashtagPress}
@@ -411,7 +424,7 @@ const VideoFeed: React.FC<VideoFeedProps> = ({ hashtagFilter, isPersonalized = f
         </View>
       </View>
     );
-  }, [visibleVideoIndex, isFocused, pageHeight, handleHashtagPress, videos.length, isScrolling]);
+  }, [visibleVideoIndex, isFocused, pageHeight, handleHashtagPress, videos.length, isScrolling, preloadedVideos, trackPreloadedVideo]);
 
   if (loading && videos.length === 0) {
     return (
