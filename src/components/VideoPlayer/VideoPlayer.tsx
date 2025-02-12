@@ -20,6 +20,7 @@ import { useVideoState } from '../../contexts/VideoStateContext';
 import { AIAnalysisModal } from '../AIAnalysis/AIAnalysisModal';
 import { functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
+import { requestAnalysis } from '../../services/aiAnalysisService';
 
 const VISIBILITY_DEBOUNCE_MS = 500; // Debounce time for visibility changes
 
@@ -46,6 +47,13 @@ interface AIAnalysis {
   environmentalContext: string;
   cinematographicElements: string;
   narrativeSignificance: string;
+}
+
+// Add type for playback status
+interface PlaybackStatus {
+  isLoaded: boolean;
+  positionMillis: number;
+  // ... other status fields
 }
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpdate, onHashtagPress, showBackButton, onBackPress }) => {
@@ -79,6 +87,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
   const visibilityTimeout = useRef<NodeJS.Timeout>();
   const spinValue = useRef(new Animated.Value(0)).current;
 
+  const [videoPosition, setVideoPosition] = useState(0);
+  const positionInterval = useRef<NodeJS.Timeout>();
+
   const player = useVideoPlayer({
     uri: '',
     metadata: {
@@ -86,30 +97,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     }
   });
 
-  // Add these state variables to track player status
-  const [currentPosition, setCurrentPosition] = useState(0);
-  const [currentStatus, setCurrentStatus] = useState('');
-
-  // Update the status change handler
+  // Simplified status handling
   const { status } = useEvent(player, 'statusChange', { status: player.status });
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
 
-  // Add effect to update position and status
+  // Only log play/pause events
   useEffect(() => {
-    if (status) {
-      setCurrentStatus(status);
+    if (isPlaying !== undefined) {
+      console.log('Playback state changed:', {
+        isPlaying,
+        videoId: video.id,
+        timestamp: new Date().toISOString()
+      });
     }
-  }, [status]);
-
-  useEffect(() => {
-    const updatePosition = async () => {
-      if (status === 'readyToPlay') {
-        const position = await player.getCurrentPosition();
-        setCurrentPosition(position);
-      }
-    };
-    updatePosition();
-  }, [status, player]);
+  }, [isPlaying, video.id]);
 
   const loadVideo = useCallback(async () => {
     const maxRetries = 3;
@@ -117,6 +118,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
 
     const tryLoadVideo = async () => {
       try {
+        console.log('Starting video load:', {
+          videoId: video.id,
+          timestamp: new Date().toISOString()
+        });
+
         setLoading(true);
         setPlayerReady(false);
 
@@ -131,10 +137,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
 
         const fileInfo = await FileSystem.getInfoAsync(localFileName);
         if (!fileInfo.exists) {
+          console.log('Downloading video:', {
+            videoId: video.id,
+            storageUrl,
+            localFileName,
+            timestamp: new Date().toISOString()
+          });
           await FileSystem.downloadAsync(storageUrl, localFileName);
         }
 
         try {
+          console.log('Replacing video source:', {
+            videoId: video.id,
+            localFileName,
+            timestamp: new Date().toISOString()
+          });
           await player.replace({
             uri: localFileName,
             metadata: { title: video.title },
@@ -160,6 +177,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
           });
         }
 
+        console.log('Video load complete:', {
+          videoId: video.id,
+          timestamp: new Date().toISOString()
+        });
+
         setLoading(false);
         setInitialLoad(false);
 
@@ -180,9 +202,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
 
   useEffect(() => {
     if (player) {
+      console.log('Setting up player:', {
+        videoId: video.id,
+        timestamp: new Date().toISOString()
+      });
       player.loop = true;
     }
-  }, [player]);
+  }, [player, video.id]);
 
   useEffect(() => {
     if (visibilityTimeout.current) {
@@ -434,74 +460,77 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     nativeControls: false,
     showNativeControls: false,
     useNativeControls: false,
-    hideNativeControls: true,
+    hideNativeControls: true
   };
 
   const handleDescriptionPress = useCallback(() => {
     setIsDescriptionExpanded(prev => !prev);
   }, []);
 
-  const analyzeCurrentFrame = async () => {
+  const handleAnalysisPress = async () => {
     try {
+      if (!player || !playerReady) {
+        Alert.alert('Error', 'Video player not ready');
+        return;
+      }
+
+      // Check if video is in a valid state for analysis
+      if (loading || !player.duration || player.status !== 'readyToPlay') {
+        Alert.alert(
+          'Cannot Analyze',
+          'Please wait for the video to load completely before analyzing.'
+        );
+        return;
+      }
+
+      const currentTimeSeconds = videoPosition / 1000; // Convert from ms to seconds
+
+      // Validate the current time is within video bounds
+      if (currentTimeSeconds < 0 || currentTimeSeconds > player.duration) {
+        Alert.alert(
+          'Invalid Position',
+          'Cannot analyze this frame. Please try again when the video is playing properly.'
+        );
+        return;
+      }
+
+      // Only log when AI button is pressed
+      console.log('AI Analysis requested:', {
+        currentTimeSeconds,
+        videoId: video.id,
+        duration: player.duration,
+        status: player.status,
+        timestamp: new Date().toISOString()
+      });
+
       setIsAnalyzing(true);
+      if (!video.storagePath) throw new Error('No video storage path available');
 
-      if (!video.storagePath) {
-        throw new Error('No video storage path available');
-      }
-
-      // Use the tracked position and status
-      const timestamp = currentPosition;
-
-      // Log what we're about to send
-      console.log('Sending analysis request:', {
+      const result = await requestAnalysis({
         videoPath: video.storagePath,
-        timestamp: timestamp,
-        fullVideo: video  // Log the full video object to see what we have
+        timestamp: currentTimeSeconds,
+        fullVideo: video
       });
 
-      // Pause video while analyzing
-      if (isPlaying) {
-        await player.pause();
+      // Check for failed analysis response
+      if (!result || result.text?.includes('Analysis failed') || result.highlights?.length === 0) {
+        Alert.alert(
+          'Cannot Analyze',
+          'Unable to analyze this frame. The video might be in a transition or black screen. Please try a different moment in the video.'
+        );
+        return;
       }
 
-      const response = await fetch('https://us-central1-reelai-c82fc.cloudfunctions.net/analyze_video', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          videoPath: video.storagePath,
-          timestamp: timestamp
-        })
-      });
-
-      // Log the response
-      const responseText = await response.text();
-      console.log('Raw response:', responseText);
-      const result = JSON.parse(responseText);
-
-      if (!result.analysis) {
-        throw new Error('No analysis result received');
-      }
-
-      console.log('Analysis result:', result.analysis);
-
-      // Update the analysis result state
-      setAnalysisResult(result.analysis);
+      setAnalysisResult(result);
       setShowAIAnalysis(true);
-
     } catch (error) {
-      console.error('Analysis error:', error);
+      console.error('Error requesting analysis:', error);
       Alert.alert(
         'Analysis Failed',
-        'Could not analyze the current frame. Please try again.'
+        'Could not analyze the current frame. Please ensure the video is playing properly and try again.'
       );
     } finally {
       setIsAnalyzing(false);
-      // Resume playback if it was playing before
-      if (isPlaying) {
-        player.play();
-      }
     }
   };
 
@@ -555,6 +584,28 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
     );
   };
 
+  // Update position tracking to be silent
+  useEffect(() => {
+    if (player && playerReady && player.playing) {
+      if (positionInterval.current) {
+        clearInterval(positionInterval.current);
+      }
+
+      positionInterval.current = setInterval(() => {
+        const currentTime = player.currentTime;
+        if (typeof currentTime === 'number') {
+          setVideoPosition(currentTime * 1000); // Convert seconds to milliseconds
+        }
+      }, 200);
+    }
+
+    return () => {
+      if (positionInterval.current) {
+        clearInterval(positionInterval.current);
+      }
+    };
+  }, [player, playerReady, player?.playing]);
+
   if (Platform.OS === 'web') {
     return (
       <video
@@ -575,11 +626,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
         >
           <View style={styles.videoContainer}>
             <VideoView
+              {...videoViewConfig}
               player={player}
               style={styles.video}
               contentFit={getContentFit()}
-              {...videoViewConfig}
               ref={videoRef}
+              onPlaybackStatusUpdate={(status) => {
+                if (status.isLoaded && status.positionMillis) {
+                  setVideoPosition(status.positionMillis);
+                }
+              }}
             />
           </View>
 
@@ -645,7 +701,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
 
                 <TouchableOpacity
                   style={[styles.controlButton, isAnalyzing && styles.controlButtonDisabled]}
-                  onPress={analyzeCurrentFrame}
+                  onPress={handleAnalysisPress}
                   disabled={isAnalyzing}
                 >
                   <Animated.View style={{
@@ -702,6 +758,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ video, isVisible, onVideoUpda
         visible={showAIAnalysis}
         onClose={() => setShowAIAnalysis(false)}
         analysis={analysisResult}
+        currentTime={videoPosition / 1000}
       />
     </>
   );

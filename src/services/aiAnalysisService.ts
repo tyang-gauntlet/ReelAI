@@ -27,6 +27,29 @@ interface AnalysisResponse {
   };
 }
 
+// Add new interfaces for highlighted terms
+interface HighlightedTerm {
+  term: string;
+  definition: string;
+  category: string; // e.g., 'species', 'behavior', 'habitat', etc.
+}
+
+interface AnalysisWithHighlights {
+  text: string;
+  highlights: HighlightedTerm[];
+}
+
+// Update the existing interfaces
+interface AIAnalysis {
+  description: AnalysisWithHighlights;
+  species: {
+    identification: AnalysisWithHighlights;
+    classification: AnalysisWithHighlights;
+    conservationStatus: AnalysisWithHighlights;
+  };
+  // ... rest of the interface remains the same but with AnalysisWithHighlights ...
+}
+
 // Keep both function names for backward compatibility
 export const analyzeScreenshot = async (
   base64Image: string,
@@ -207,6 +230,53 @@ export const testImageUpload = async (): Promise<string> => {
       type: error instanceof Error ? error.constructor.name : typeof error,
       message: error instanceof Error ? error.message : String(error),
     });
+    throw error;
+  }
+};
+
+interface AnalysisRequest {
+  videoPath: string;
+  timestamp: number;
+  fullVideo: any;
+}
+
+export const requestAnalysis = async (params: AnalysisRequest) => {
+  try {
+    // Log the request parameters
+    console.log('Sending analysis request with params:', {
+      videoPath: params.videoPath,
+      timestamp: params.timestamp,
+      fullVideoId: params.fullVideo?.id,
+      fullVideoPath: params.fullVideo?.storagePath,
+    });
+
+    const response = await fetch(
+      'https://us-central1-reelai-c82fc.cloudfunctions.net/analyze_video',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          videoPath: params.videoPath,
+          timestamp: params.timestamp,
+          fullVideo: params.fullVideo,
+        }),
+      },
+    );
+
+    const responseText = await response.text();
+    console.log('Raw response from analyze_video:', responseText);
+    const result = JSON.parse(responseText);
+
+    if (!result.analysis) {
+      console.error('Invalid analysis result:', result);
+      throw new Error('No analysis result received');
+    }
+
+    return result.analysis;
+  } catch (error) {
+    console.error('Analysis error:', error);
     throw error;
   }
 };
