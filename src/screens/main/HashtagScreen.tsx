@@ -195,65 +195,66 @@ export const HashtagScreen = () => {
   }
 
   return (
-    <SafeScreen backgroundColor={theme.colors.background}>
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Ionicons name="chevron-back" size={24} color={theme.colors.text.primary} />
-          </TouchableOpacity>
-          <View style={styles.hashtagContainer}>
-            <Text style={styles.hashtagText}>
-              {tag?.startsWith('#') ? tag : `#${tag}`}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={[
-              styles.followButton,
-              isFollowing && styles.followingButton,
-              loading && styles.loadingButton
-            ]}
-            onPress={handleFollowToggle}
-            disabled={loading}
-          >
-            <Ionicons
-              name={isFollowing ? "checkmark" : "add"}
-              size={18}
-              color={isFollowing ? theme.colors.accent : theme.colors.text.primary}
-            />
-            <Text style={[
-              styles.followButtonText,
-              isFollowing && styles.followingButtonText
-            ]}>
-              {loading ? 'Loading...' : (isFollowing ? 'Following' : 'Follow')}
-            </Text>
-          </TouchableOpacity>
+    <View style={styles.fullScreenContainer}>
+      {tag && <VideoFeed hashtagFilter={tag} />}
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="chevron-back" size={24} color={theme.colors.text.primary} />
+        </TouchableOpacity>
+        <View style={styles.hashtagContainer}>
+          <Text style={styles.hashtagText}>
+            {tag?.startsWith('#') ? tag : `#${tag}`}
+          </Text>
         </View>
-        {tag && <VideoFeed hashtagFilter={tag} />}
+        <TouchableOpacity
+          style={[
+            styles.followButton,
+            isFollowing && styles.followingButton,
+            loading && styles.loadingButton
+          ]}
+          onPress={handleFollowToggle}
+          disabled={loading}
+        >
+          <Ionicons
+            name={isFollowing ? "checkmark" : "add"}
+            size={18}
+            color={isFollowing ? theme.colors.accent : theme.colors.text.primary}
+          />
+          <Text style={[
+            styles.followButtonText,
+            isFollowing && styles.followingButtonText
+          ]}>
+            {loading ? 'Loading...' : (isFollowing ? 'Following' : 'Follow')}
+          </Text>
+        </TouchableOpacity>
       </View>
-    </SafeScreen>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#000',
+  },
+  fullScreenContainer: {
+    flex: 1,
+    backgroundColor: '#000',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: theme.spacing.md,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    position: 'relative',
-    top: 0,
+    justifyContent: 'space-between',
+    position: 'absolute',
+    top: 44,
     left: 0,
     right: 0,
     zIndex: 10,
     height: 56,
-    paddingHorizontal: theme.spacing.xl,
+    paddingHorizontal: theme.spacing.md,
   },
   headerTitle: {
     color: theme.colors.text.primary,
@@ -262,9 +263,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   backButton: {
-    position: 'absolute',
-    left: theme.spacing.md,
-    zIndex: 2,
     height: 56,
     width: 56,
     alignItems: 'center',
@@ -274,7 +272,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 50,
   },
   hashtagText: {
     color: theme.colors.text.primary,
@@ -290,8 +287,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: theme.borderRadius.full,
     gap: 4,
-    position: 'absolute',
-    right: theme.spacing.md,
+    marginRight: theme.spacing.md,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.2)',
   },
