@@ -12,12 +12,18 @@ ReelAI is a TikTok-style mobile application specifically designed for language l
 
 ## User Stories
 
-1. "As a nature lover, I want to scroll through a feed of short wildlife and nature clips"
+1. "As a nature lover, I want to scroll through a curated feed of short wildlife and nature clips"
 2. "As a nature lover, I want to save nature clips to watch later for reference and enjoyment"
 3. "As a nature lover, I want to categorize saved clips by animal type, habitat, and region"
 4. "As a nature lover, I want to like and share nature clips that I find fascinating"
 5. "As a nature lover, I want to see different angles and perspectives of the same natural phenomenon"
 6. "As a nature lover, I want to follow specific animal categories to build my personalized nature collection"
+
+## AI User Stories
+
+1. As a nature lover, I want AI to generate the title, description, and hashtags for the videos
+2. As a nature lover, I want AI to give me expert analysis of the videos I watch
+3. As a nature lover, I want AI to provide extra information about the analysis
 
 ## Technical Implementation Guide
 
@@ -114,7 +120,7 @@ savedVideos/
 try {
   // Auth operation
 } catch (error) {
-  logger.error("Auth Error", {
+  logger.error('Auth Error', {
     errorCode: error.code,
     errorMessage: error.message,
     userId: currentUser?.uid,
@@ -129,7 +135,7 @@ try {
 try {
   // Video loading operation
 } catch (error) {
-  logger.error("Video Load Error", {
+  logger.error('Video Load Error', {
     videoId: video.id,
     errorType: error.type,
     deviceInfo: getDeviceInfo(),
@@ -144,7 +150,7 @@ try {
 try {
   // Firestore operation
 } catch (error) {
-  logger.error("Database Error", {
+  logger.error('Database Error', {
     operation: operationType,
     collection: collectionName,
     errorDetails: error.details,
